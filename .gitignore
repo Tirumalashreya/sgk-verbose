@@ -1,0 +1,36 @@
+# Python
+.env
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Audio (large binary files - re-download as needed)
+audio_input/
+
+# Generated databases
+chroma_db/
+outputs/
+
+# macOS
+.DS_Store
+
+# React Native / Node
+node_modules/
+.expo/
+dist/
+web-build/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.env*.local
+*.tsbuildinfo
+/ios
+/android
