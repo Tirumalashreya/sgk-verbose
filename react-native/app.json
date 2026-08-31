@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "SGKS Notes",
+    "slug": "shravanam-sgks",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/acharya.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/acharya.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#17120d"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": { "supportsTablet": true, "bundleIdentifier": "org.sgks.shravanam" },
+    "android": { "package": "org.sgks.shravanam" }
+  }
+}

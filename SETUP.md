@@ -13,7 +13,8 @@ cd sgk-verbose
 npm install -g @anthropic-ai/claude-code
 ```
 
-Then run `claude` and log in with your Anthropic account in the browser.
+Then run `claude` and log in with your Anthropic accoun
+ the browser.
 
 ## Step 3 — Restore Claude memory
 
@@ -58,12 +59,15 @@ Open `.env` and add your Gemini API key:
 GEMINI_API_KEY=your_actual_key_here
 ```
 
+
+
 Get a key from: https://ai.google.dev/
 
 ## Step 5 — React Native frontend setup
 
 ```bash
-cd ../sgks-app
+cd ../sgks
+-app
 npm install
 ```
 
@@ -90,3 +94,4 @@ python main.py
 cd sgks-app
 npx expo start
 ```
+

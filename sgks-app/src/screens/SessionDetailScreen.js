@@ -91,7 +91,7 @@ export default function SessionDetailScreen({ route, navigation }) {
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
 
             {/* SUMMARY */}
             {activeTab === 'Summary' && (

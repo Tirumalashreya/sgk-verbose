@@ -10,12 +10,23 @@ import { startSession, stopSession, createWebSocket, uploadAudio } from '../serv
 
 const CHUNK_SECONDS = 30;
 
+const PIPELINE_STAGES = [
+  { key: 'transcription', label: 'Transcribing Audio' },
+  { key: 'correction', label: 'Correcting Transcript' },
+  { key: 'shloka_detector', label: 'Detecting Shlokas' },
+  { key: 'knowledge_structurer', label: 'Structuring Knowledge' },
+  { key: 'notes_generator', label: 'Generating Notes' },
+  { key: 'memory', label: 'Saving to Memory' },
+];
+
 export default function LiveScreen({ navigation }) {
   const [mode, setMode] = useState('youtube'); // 'youtube' | 'mic'
   const [url, setUrl] = useState('');
-  const [status, setStatus] = useState('idle'); // idle | processing | live | stopped
+  const [status, setStatus] = useState('idle'); // idle | processing | live | stopped | pipeline_running | done
   const [chunks, setChunks] = useState([]);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [completedAgents, setCompletedAgents] = useState([]);
+  const [currentAgent, setCurrentAgent] = useState(null);
   const wsRef = useRef(null);
   const recordingRef = useRef(null);
   const timerRef = useRef(null);
@@ -33,6 +44,16 @@ export default function LiveScreen({ navigation }) {
     wsRef.current = createWebSocket((data) => {
       if (data.type === 'chunk_complete') {
         setChunks(prev => [...prev, data]);
+        setStatus('done');
+        setCurrentAgent(null);
+      } else if (data.type === 'agent_progress') {
+        setCurrentAgent(data.label);
+        setCompletedAgents(prev => {
+          const idx = PIPELINE_STAGES.findIndex(s => s.key === data.agent);
+          // mark all stages up to and including this one as done
+          const done = PIPELINE_STAGES.slice(0, idx + 1).map(s => s.key);
+          return done;
+        });
       }
     }, () => {});
   };
@@ -95,6 +116,8 @@ export default function LiveScreen({ navigation }) {
 
     setStatus('live');
     setChunks([]);
+    setCompletedAgents([]);
+    setCurrentAgent(null);
     chunkCountRef.current = 0;
     setRecordingTime(0);
     openWebSocket();
@@ -114,8 +137,8 @@ export default function LiveScreen({ navigation }) {
       recordingRef.current = null;
       if (uri) await uploadAudio(uri);
     }
-    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
-    setStatus('stopped');
+    // Keep WebSocket open — pipeline is still running, we need progress updates
+    setStatus('pipeline_running');
   };
 
   const handleStop = mode === 'youtube' ? handleYouTubeStop : handleMicStop;
@@ -133,7 +156,7 @@ export default function LiveScreen({ navigation }) {
         <Text style={styles.subtitle}>Process a YouTube pravachanam or record live from your microphone</Text>
 
         {/* Mode toggle */}
-        {(status === 'idle' || status === 'stopped') && (
+        {(status === 'idle' || status === 'stopped' || status === 'done') && (
           <View style={styles.modeToggle}>
             <TouchableOpacity
               style={[styles.modeBtn, mode === 'youtube' && styles.modeBtnActive]}
@@ -153,7 +176,7 @@ export default function LiveScreen({ navigation }) {
         )}
 
         {/* YouTube URL input */}
-        {mode === 'youtube' && (status === 'idle' || status === 'stopped') && (
+        {mode === 'youtube' && (status === 'idle' || status === 'stopped' || status === 'done') && (
           <TextInput
             style={styles.input}
             placeholder="https://www.youtube.com/watch?v=..."
@@ -166,7 +189,7 @@ export default function LiveScreen({ navigation }) {
         )}
 
         {/* Mic info */}
-        {mode === 'mic' && (status === 'idle' || status === 'stopped') && (
+        {mode === 'mic' && (status === 'idle' || status === 'stopped' || status === 'done') && (
           <View style={styles.micInfo}>
             <Ionicons name="mic-circle-outline" size={48} color={colors.gold} />
             <Text style={styles.micInfoText}>Records in 30-second chunks and sends each one for AI processing</Text>
@@ -174,7 +197,7 @@ export default function LiveScreen({ navigation }) {
         )}
 
         {/* Start button */}
-        {(status === 'idle' || status === 'stopped') && (
+        {(status === 'idle' || status === 'stopped' || status === 'done') && (
           <TouchableOpacity style={styles.startBtn} onPress={handleStart}>
             <Ionicons name={mode === 'mic' ? 'mic' : 'radio'} size={20} color="#FFF" />
             <Text style={styles.startText}>{mode === 'mic' ? 'Start Recording' : 'Start Processing'}</Text>
@@ -216,9 +239,31 @@ export default function LiveScreen({ navigation }) {
           </View>
         )}
 
-        {status === 'stopped' && (
-          <View style={styles.stoppedBox}>
-            <Text style={styles.stoppedText}>Session stopped. Notes saved to library.</Text>
+        {(status === 'pipeline_running' || status === 'done') && (
+          <View style={styles.pipelineBox}>
+            <Text style={styles.pipelineTitle}>
+              {status === 'done' ? '✓ Notes saved to library' : 'Recording stopped — processing...'}
+            </Text>
+            <View style={styles.stageList}>
+              {PIPELINE_STAGES.map((stage) => {
+                const done = completedAgents.includes(stage.key);
+                const active = currentAgent === stage.label;
+                return (
+                  <View key={stage.key} style={styles.stageRow}>
+                    {done ? (
+                      <Ionicons name="checkmark-circle" size={18} color={colors.gold} />
+                    ) : active ? (
+                      <ActivityIndicator size="small" color={colors.gold} />
+                    ) : (
+                      <Ionicons name="ellipse-outline" size={18} color={colors.textMuted} />
+                    )}
+                    <Text style={[styles.stageText, done && styles.stageTextDone, active && styles.stageTextActive]}>
+                      {stage.label}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
           </View>
         )}
 
@@ -361,12 +406,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
   },
   stopText: { color: '#FFF', fontSize: 15, fontWeight: '600' },
-  stoppedBox: {
-    marginTop: 20, backgroundColor: colors.saffronLight,
-    borderRadius: 14, padding: 16, width: '100%',
+  pipelineBox: {
+    marginTop: 20, backgroundColor: colors.white,
+    borderRadius: 16, padding: 20, width: '100%',
     borderWidth: 1, borderColor: 'rgba(196,144,15,0.2)',
   },
-  stoppedText: { color: colors.text, fontSize: 14, textAlign: 'center' },
+  pipelineTitle: { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 16, textAlign: 'center' },
+  stageList: { gap: 12 },
+  stageRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  stageText: { fontSize: 13, color: colors.textMuted },
+  stageTextDone: { color: colors.text },
+  stageTextActive: { color: colors.gold, fontWeight: '600' },
   chunksSection: { width: '100%', marginTop: 28 },
   chunksTitle: { fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 14 },
   chunkCard: {

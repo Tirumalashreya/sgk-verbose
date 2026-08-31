@@ -1,72 +1,116 @@
 from graph.state import VerbaState
-import json
-from google import genai
-import os
+import json, os
+from agents.groq_llm_client import call as _groq_call, STRONG_MODEL
+from agents.text_chunker import chunk_text
 from dotenv import load_dotenv
-from concurrent.futures import ThreadPoolExecutor
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-def _call(prompt):
-    return client.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt).text.strip()
+def _transliterate(text: str) -> str:
+    from indic_transliteration import sanscript
+    from indic_transliteration.sanscript import transliterate
+    return transliterate(text, sanscript.TELUGU, sanscript.IAST)
+
+
+def _call(prompt: str) -> str:
+    return _groq_call(prompt, api_key_env="GROQ_API_KEY_NOTES", model=STRONG_MODEL)
+
+
+def _shloka_list_text(shlokas: list) -> str:
+    lines = []
+    for i, s in enumerate(shlokas, 1):
+        text = (s.get("text") or "").strip()
+        original = (s.get("original") or "").strip()
+        lang = (s.get("language") or "").strip()
+        if text:
+            entry = f'{i}. Telugu script: "{text}"'
+            if original:
+                entry += f'\n   Original {lang} script: "{original}"'
+            lines.append(entry)
+    return "\n".join(lines)
+
 
 def notes_generator_agent(state: VerbaState) -> VerbaState:
-    print("[notes_generator] starting — running 3 Gemini calls in parallel...")
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        f1 = executor.submit(_call, build_prompt_exact(state))
-        f2 = executor.submit(_call, build_prompt_enhanced(state))
-        f3 = executor.submit(_call, build_prompt_summary(state))
-        state["notes"] = f1.result()
-        state["enhanced_notes"] = f2.result()
-        state["summary"] = f3.result()
+    transcript = state.get("transcript", "") or ""
+    if not transcript.strip():
+        state["notes"] = ""
+        state["enhanced_notes"] = ""
+        state["summary"] = ""
+        state["current_agent"] = "notes_generation_done"
+        return state
 
-    print("[notes_generator] done — notes, enhanced notes, summary ready")
+    shlokas = state.get("shlokas") or []
+    shloka_context = _shloka_list_text(shlokas)
+
+    print(f"[notes_generator] generating notes via Groq ({len(transcript)} chars, {len(shlokas)} shlokas detected)...")
+
+    chunks = chunk_text(transcript, chunk_size=3000, overlap=200)
+    print(f"[notes_generator] processing {len(chunks)} chunk(s)")
+
+    notes_parts = []
+    for i, chunk in enumerate(chunks):
+        print(f"[notes_generator] chunk {i+1}/{len(chunks)}...")
+
+        shloka_section = ""
+        if shloka_context:
+            shloka_section = f"""
+DETECTED SHLOKAS (from shloka_detect agent):
+These verses were identified in the transcript. When they appear, format them like this — TWO lines:
+Line 1: **"<Telugu script transliteration>"**
+Line 2: *(<original Tamil or Sanskrit script>)*
+
+Detected shlokas:
+{shloka_context}
+"""
+
+        prompt = f"""You are a faithful scribe for Telugu spiritual discourses.
+
+Your job: present the transcript as clean, readable paragraph notes with proper structure.
+
+FORMATTING RULES:
+- Break the content into meaningful paragraphs based on topic/context — each paragraph 3-5 sentences
+- Separate paragraphs with a blank line
+- Do NOT add headings or titles
+- Include EVERY sentence — do not skip or summarise anything
+- Do NOT paraphrase — use the exact words from the transcript
+- Output in Telugu script only. No English.
+
+EMOTIONAL EXPRESSION RULES:
+- Use ! at the end of sentences where the speaker is clearly emphatic, exclaiming, or making a strong point (e.g., repetition for stress, a sudden realisation, or a call to attention)
+- Use "..." (double quotes) around key Sanskrit/Telugu terms, important concepts, or words the speaker consciously highlights — e.g., "సద్విద్య", "ఆత్మ", "అద్వితీయం"
+- Use ? for rhetorical questions the speaker poses to the audience
+- Only add these markers where they are genuinely implied by the spoken rhythm — do NOT invent emotion that is not in the transcript
+{shloka_section}
+SHLOKA HIGHLIGHTING RULE:
+- Any Sanskrit shloka or Tamil pasuram must appear as TWO lines:
+  Line 1: **"<Telugu script transliteration as spoken>"**
+  Line 2: *(<original Tamil or Sanskrit script if you know it, else omit line 2>)*
+- These are Sanskrit/Tamil words embedded mid-sentence — different rhythm from surrounding Telugu
+- Even short verse fragments (4+ Sanskrit/Tamil words) must be highlighted this way
+- Telugu explanation sentences are NEVER bolded or italicised
+
+TRANSCRIPT:
+{chunk}"""
+        part = _call(prompt)
+        if part:
+            notes_parts.append(part)
+
+    state["notes"] = "\n\n".join(notes_parts)
+    state["enhanced_notes"] = state["notes"]
+    state["transliterated_notes"] = _transliterate(state["notes"])
+
+    summary_prompt = f"""Summarize this Telugu spiritual pravachanam in 2-3 lines.
+
+RULES:
+- Write ONLY in Telugu script. No English.
+- Base the summary only on what is in the transcript.
+- Do NOT add shlokas or quotes from your knowledge.
+
+TRANSCRIPT:
+{transcript[:3000]}"""
+
+    state["summary"] = _call(summary_prompt)
+
+    print("[notes_generator] done")
     state["current_agent"] = "notes_generation_done"
     return state
-    
-    
-def build_prompt_exact(state):
-    segments = state.get("segments", [])
-    segments_json = json.dumps(segments, ensure_ascii=False, indent=2)
-    return f"""You are a faithful scribe for Telugu spiritual discourses.
-Your job is to reproduce the pravachanam as exact notes — line by line, segment by segment.
-DO NOT add your own words, explanations, or interpretations. Stay 100% faithful to what was said.
-For every segment with label "shloka", wrap it exactly like this:
-[SHLOKA BOX START]
-<shloka text here>
-[SHLOKA BOX END]
-For all other segments, write them as clean notes preserving the original meaning.
-SEGMENTS:
-{segments_json}"""
-
-def build_prompt_enhanced(state):
-    segments = state.get("segments", [])
-    shlokas = state.get("shlokas", [])
-    segments_json = json.dumps(segments, ensure_ascii=False, indent=2)
-    shlokas_json = json.dumps(shlokas, ensure_ascii=False, indent=2)
-    return f"""You are an expert in Telugu spiritual discourses, Sanskrit scriptures, and Vedantic philosophy.
-Generate AI-enhanced notes from this pravachanam. For each segment:
-- For "teaching" segments: explain the teaching in simple terms and add deeper context
-- For "philosophy" segments: elaborate on the philosophical concept with examples
-- For "story" segments: retell the story clearly and state the moral or message
-- For "devotional" segments: preserve as-is with a brief meaning
-- For "shloka" segments: wrap in a box AND add the meaning, scripture source, and significance:
-[SHLOKA BOX START]
-<shloka text>
-Meaning: <meaning in simple Telugu/English>
-Source: <scripture name if known>
-Significance: <why Guru Garu quoted this here>
-[SHLOKA BOX END]
-SEGMENTS:
-{segments_json}
-DETECTED SHLOKAS WITH SOURCES:
-{shlokas_json}"""
-
-def build_prompt_summary(state):
-    transcript = state.get("transcript", "")
-    return f"""You are summarizing a Telugu spiritual pravachanam for a devotee.
-Write a concise 2-3 line summary of the entire session — what was the main topic, what key message did the Guru convey, and what is the devotee's key takeaway.
-Keep it simple, warm, and faithful to the spirit of the discourse.
-TRANSCRIPT:
-{transcript}"""

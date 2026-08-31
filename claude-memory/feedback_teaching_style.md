@@ -21,3 +21,4 @@ For frontend (React Native / Expo), just build it directly without asking them t
   4. Correct mistakes and explain every line
   5. Only reveal full solution as last resort
 - If user says "you write it / just fix it" → write it directly
+

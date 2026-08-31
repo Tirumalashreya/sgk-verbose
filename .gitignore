@@ -12,6 +12,18 @@ audio_input/
 chroma_db/
 outputs/
 
+# Google Cloud credentials
+*.json
+!**/package.json
+!**/app.json
+!**/babel.config.js
+!**/tsconfig*.json
+!verba-pravachana-ai/data/
+
+# Logs and runtime data
+*.log
+sessions.json
+
 # macOS
 .DS_Store
 
