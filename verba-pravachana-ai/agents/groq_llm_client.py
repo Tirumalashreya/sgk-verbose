@@ -1,4 +1,5 @@
-import os, re, time
+import itertools, os, re, time
+from concurrent.futures import ThreadPoolExecutor
 from groq import Groq
 from dotenv import load_dotenv
 load_dotenv()
@@ -15,16 +16,35 @@ _KEY_ENVS = ["GROQ_API_KEY_SHLOKA", "GROQ_API_KEY_STRUCTURER", "GROQ_API_KEY_NOT
              "GROQ_API_KEY_SPARE1", "GROQ_API_KEY_SPARE2"]
 _MAX_ROUNDS = 6
 _cooldown_until: dict[str, float] = {}  # key -> time it may be used again (shared across calls)
+_rotation = itertools.count()           # spreads concurrent calls across keys
 
 
-def _keys_for(api_key_env: str) -> list[str]:
+def _distinct_keys(first_env: str | None = None) -> list[str]:
     keys = []
-    for env in [api_key_env] + _KEY_ENVS:
+    for env in ([first_env] if first_env else []) + _KEY_ENVS:
         k = os.getenv(env, "")
         # The same key is often pasted into several slots — count it once
         if k and k not in keys:
             keys.append(k)
     return keys
+
+
+def _keys_for(api_key_env: str) -> list[str]:
+    keys = _distinct_keys(api_key_env)
+    if len(keys) > 1:
+        # Start each call on the next key, so parallel calls don't all pile onto one account
+        start = next(_rotation) % len(keys)
+        keys = keys[start:] + keys[:start]
+    return keys
+
+
+def parallel_map(fn, items: list) -> list:
+    """fn over items, one in-flight call per distinct Groq key, results in input order."""
+    workers = max(1, min(len(_distinct_keys()), int(os.getenv("GROQ_MAX_PARALLEL", "8")), len(items)))
+    if workers == 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(fn, items))
 
 
 def _request(api_key: str, prompt: str, model: str, temperature: float) -> str:

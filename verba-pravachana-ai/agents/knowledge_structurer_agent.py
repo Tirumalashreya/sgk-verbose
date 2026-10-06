@@ -1,6 +1,6 @@
 from graph.state import VerbaState
 import json, re
-from agents.groq_llm_client import call as _groq_call, FAST_MODEL
+from agents.groq_llm_client import call as _groq_call, parallel_map, FAST_MODEL
 from agents.text_chunker import chunk_text
 from dotenv import load_dotenv
 load_dotenv()
@@ -40,8 +40,7 @@ def knowledge_structurer_agent(state: VerbaState) -> VerbaState:
     print(f"[knowledge_structurer] processing {len(chunks)} chunk(s)")
 
     all_segments = []
-    for chunk in chunks:
-        segs = _structure_chunk(chunk)
+    for segs in parallel_map(_structure_chunk, chunks):
         all_segments.extend(segs)
 
     print(f"[knowledge_structurer] done — {len(all_segments)} segments")

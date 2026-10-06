@@ -293,6 +293,7 @@ def test_groq_switches_key_immediately_on_rate_limit(monkeypatch):
                      "GROQ_API_KEY_SHLOKA": "", "GROQ_API_KEY_NOTES": ""}.items():
         monkeypatch.setenv(env, val)
     monkeypatch.setattr(g, "_cooldown_until", {})
+    monkeypatch.setattr(g, "_rotation", __import__("itertools").count())
     sleeps, used = [], []
     monkeypatch.setattr(g.time, "sleep", sleeps.append)
 
@@ -326,3 +327,36 @@ def test_groq_waits_only_when_every_key_is_limited(monkeypatch):
     monkeypatch.setattr(g, "_request", fake)
     assert g.call("p", "GROQ_API_KEY_NOTES") == "ok"
     assert len(sleeps) == 1 and 7 < sleeps[0] <= 9
+
+
+def test_parallel_map_keeps_order_spreads_keys_and_caps_workers(monkeypatch):
+    import threading, time as _t
+    from agents import groq_llm_client as g
+    for env, val in zip(g._KEY_ENVS, ["a", "b", "c", "a", ""]):  # 3 distinct keys
+        monkeypatch.setenv(env, val)
+    monkeypatch.setattr(g, "_cooldown_until", {})
+    monkeypatch.setattr(g, "_rotation", __import__("itertools").count())
+    lock, live, peak, first_keys = threading.Lock(), [0], [0], []
+
+    def fake(key, prompt, *a):
+        with lock:
+            live[0] += 1; peak[0] = max(peak[0], live[0]); first_keys.append(key)
+        _t.sleep(0.05)
+        with lock:
+            live[0] -= 1
+        return prompt.upper()
+    monkeypatch.setattr(g, "_request", fake)
+
+    items = [f"p{i}" for i in range(12)]
+    out = g.parallel_map(lambda p: g.call(p, "GROQ_API_KEY_STRUCTURER"), items)
+    assert out == [p.upper() for p in items]          # input order preserved
+    assert peak[0] == 3                                # one in-flight call per distinct key
+    assert {k: first_keys.count(k) for k in "abc"} == {"a": 4, "b": 4, "c": 4}  # evenly spread
+
+
+def test_parallel_map_single_key_runs_sequentially(monkeypatch):
+    from agents import groq_llm_client as g
+    for env in g._KEY_ENVS:
+        monkeypatch.setenv(env, "")
+    monkeypatch.setenv("GROQ_API_KEY_NOTES", "only")
+    assert g.parallel_map(lambda x: x * 2, [1, 2, 3]) == [2, 4, 6]

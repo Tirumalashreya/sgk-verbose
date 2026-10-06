@@ -1,6 +1,6 @@
 from graph.state import VerbaState
 import json, re
-from agents.groq_llm_client import call as _groq_call, STRONG_MODEL
+from agents.groq_llm_client import call as _groq_call, parallel_map, STRONG_MODEL
 from agents.text_chunker import chunk_text
 from agents.verbatim import (normalize_ws, clean_verse, find_all, expand_to_words,
                              has_devanagari, devanagari_to_telugu, telugu_to_devanagari)
@@ -47,8 +47,7 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
 
     all_raw = []
     seen_texts = set()
-    for i, chunk in enumerate(chunks):
-        raw = _detect_in_chunk(chunk)
+    for raw in parallel_map(_detect_in_chunk, chunks):
         for s in raw:
             if not isinstance(s, dict):
                 continue
