@@ -360,3 +360,35 @@ def test_parallel_map_single_key_runs_sequentially(monkeypatch):
         monkeypatch.setenv(env, "")
     monkeypatch.setenv("GROQ_API_KEY_NOTES", "only")
     assert g.parallel_map(lambda x: x * 2, [1, 2, 3]) == [2, 4, 6]
+
+
+# ── memory ────────────────────────────────────────────────────────────────────
+
+def test_memory_rerun_replaces_segments_instead_of_duplicating(monkeypatch, tmp_path):
+    import chromadb
+    from chromadb.utils.embedding_functions import EmbeddingFunction
+    from agents import memory_agent as m
+
+    class Fake(EmbeddingFunction):  # no model download in tests
+        def __init__(self): pass
+        def __call__(self, input): return [[float(len(t)), 1.0] for t in input]
+        @staticmethod
+        def name(): return "fake"
+        def get_config(self): return {}
+        @staticmethod
+        def build_from_config(config): return Fake()
+
+    real = chromadb.PersistentClient
+    class Client:
+        def __init__(self, path): self.c = real(path=str(tmp_path / path))
+        def get_or_create_collection(self, name): return self.c.get_or_create_collection(name, embedding_function=Fake())
+    monkeypatch.setattr(m.chromadb, "PersistentClient", Client)
+
+    seg = lambda t: {"text": t, "label": "teaching", "summary": ""}
+    m.memory_agent({"audio_path": "a.mp3", "chunk_index": 1, "segments": [seg("x"), seg("y")]})
+    m.memory_agent({"audio_path": "a.mp3", "chunk_index": 2, "segments": [seg("z")]})
+    m.memory_agent({"audio_path": "a.mp3", "chunk_index": 1, "segments": [seg("x2"), seg("y2"), seg("w2")]})
+
+    col = Client("chroma_db").get_or_create_collection("notes_collection")
+    docs = sorted(col.get()["documents"])
+    assert docs == ["w2", "x2", "y2", "z"]   # chunk 1 replaced, chunk 2 untouched
