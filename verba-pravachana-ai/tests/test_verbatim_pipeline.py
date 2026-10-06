@@ -1,0 +1,328 @@
+"""
+Tests for the deterministic parts of the pipeline: shloka verification,
+formatting and validation. LLM calls are stubbed.
+
+Run from verba-pravachana-ai/:  python -m pytest tests
+"""
+import json
+import os
+import pytest
+
+from agents import shloka_detect_agent as sda
+from agents.correction_agent import _apply_term_fixes
+from agents.formatting_agent import format_notes, formatting_agent
+from agents.validation_agent import validate
+from agents.verbatim import normalize_ws, SHLOKA_LINE
+
+SANSKRIT = "యదా యదా హి ధర్మస్య గ్లానిర్భవతి భారత"
+TAMIL = "పచ్చేవామలైహోల్మేని పవడవాయి కమలచ్చంగన్"
+FILLER = "ధర్మాన్ని మనం బయట వెతకనవసరం లేదు అని చెప్పారు"
+
+
+def _transcript(n_filler: int = 30) -> str:
+    # No punctuation, like real Sarvam output; Sanskrit verse recited twice
+    parts = [FILLER] * n_filler
+    parts.insert(3, SANSKRIT)
+    parts.insert(12, TAMIL)
+    parts.insert(20, SANSKRIT)
+    return "  ".join(parts)
+
+
+def _stub_llm(monkeypatch, shlokas):
+    monkeypatch.setattr(sda, "_call", lambda prompt: json.dumps({"shlokas": shlokas}))
+
+
+def _detect(monkeypatch, transcript, shlokas):
+    _stub_llm(monkeypatch, shlokas)
+    return sda.shloka_detect_agent({"transcript": transcript})["shlokas"]
+
+
+# ── shloka verification ───────────────────────────────────────────────────────
+
+def test_rejects_verse_not_verbatim_in_transcript(monkeypatch):
+    found = _detect(monkeypatch, _transcript(), [
+        {"language": "Sanskrit", "text": "యదా యదా హి ధర్మస్య గ్లానిర్ భవతి భారత", "confidence": 0.9},  # LLM "fixed" spacing
+        {"language": "Sanskrit", "text": "పరిత్రాణాయ సాధూనాం", "confidence": 0.9},  # from memory, never spoken
+    ])
+    assert found == []
+
+
+def test_accepts_verbatim_verse_and_records_every_occurrence(monkeypatch):
+    found = _detect(monkeypatch, _transcript(), [
+        {"language": "Sanskrit", "text": f'"{SANSKRIT}"', "confidence": 0.9},  # wrapped in quotes
+    ])
+    assert len(found) == 1
+    s = found[0]
+    assert s["text"] == SANSKRIT and s["verified"]
+    assert len(s["occurrences"]) == 2
+    norm = normalize_ws(_transcript())
+    assert norm[s["start_index"]:s["end_index"]] == SANSKRIT
+
+
+def test_sanskrit_gets_devanagari_tamil_gets_no_original(monkeypatch):
+    found = _detect(monkeypatch, _transcript(), [
+        {"language": "Sanskrit", "text": SANSKRIT, "confidence": 0.9},
+        {"language": "Tamil", "text": TAMIL, "confidence": 0.9},
+    ])
+    by_lang = {s["language"]: s for s in found}
+    assert by_lang["Sanskrit"]["original"].startswith("यदा यदा हि धर्मस्य")
+    assert by_lang["Tamil"]["original"] == ""
+    assert by_lang["Tamil"]["type"] == "Paasuram"
+
+
+def test_low_confidence_and_non_verse_languages_filtered(monkeypatch):
+    found = _detect(monkeypatch, _transcript(), [
+        {"language": "Sanskrit", "text": SANSKRIT, "confidence": 0.3},
+        {"language": "Telugu", "text": FILLER, "confidence": 0.95},
+    ])
+    assert found == []
+
+
+# ── formatting ────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def detected(monkeypatch):
+    return _detect(monkeypatch, _transcript(), [
+        {"language": "Sanskrit", "text": SANSKRIT, "confidence": 0.9},
+        {"language": "Tamil", "text": TAMIL, "confidence": 0.9},
+    ])
+
+
+def test_notes_reproduce_transcript_exactly(detected):
+    transcript = _transcript()
+    notes = format_notes(transcript, detected)
+    assert validate(transcript, notes, detected) == []
+
+
+def test_shlokas_on_own_line_at_every_spoken_position(detected):
+    notes = format_notes(_transcript(), detected)
+    shloka_lines = [l for l in notes.split("\n") if SHLOKA_LINE.match(l)]
+    assert len(shloka_lines) == 3  # Sanskrit twice, Tamil once
+    assert shloka_lines[0] == f'**"{SANSKRIT}"** ({detected[0]["original"]})'
+    assert f'**"{TAMIL}"**' in shloka_lines
+
+
+def test_paragraphs_without_punctuation_use_length_fallback(detected):
+    notes = format_notes(_transcript(60), detected)
+    paragraphs = notes.split("\n\n")
+    assert len(paragraphs) > 3
+    for p in paragraphs[:-1]:
+        assert 200 <= len(p) <= 900
+
+
+def test_paragraph_break_never_splits_a_shloka():
+    long_verse = " ".join([SANSKRIT] * 8)  # ~300 chars, straddles the 400-char target
+    transcript = " ".join([FILLER] * 6 + [long_verse] + [FILLER] * 20)
+    shlokas = [{"text": long_verse, "original": ""}]
+    notes = format_notes(transcript, shlokas)
+    assert f'**"{long_verse}"**' in notes.split("\n")
+    assert validate(transcript, notes, shlokas) == []
+
+
+def test_whisper_pauses_drive_paragraph_breaks():
+    sentences = [f"{FILLER} {i}" for i in range(24)]
+    transcript = " ".join(sentences)
+    segments, t = [], 0.0
+    for i, text in enumerate(sentences):
+        segments.append({"start": t, "end": t + 3, "text": text})
+        t += 3 + (2.0 if i % 6 == 5 else 0.2)  # long pause after every 6th sentence
+    notes = format_notes(transcript, [], segments)
+    paragraphs = notes.split("\n\n")
+    assert len(paragraphs) == 4
+    assert all(p.endswith(f"{FILLER} {i}") for p, i in zip(paragraphs, (5, 11, 17, 23)))
+
+
+def test_formatting_agent_sets_frontend_fields(detected):
+    state = formatting_agent({"transcript": _transcript(), "shlokas": detected})
+    assert state["notes"] and state["enhanced_notes"] == state["notes"]
+    assert state["transliterated_notes"].startswith("dharmānni")
+
+
+def test_empty_transcript():
+    assert format_notes("", []) == ""
+    assert validate("", "", []) == []
+
+
+# ── validation ────────────────────────────────────────────────────────────────
+
+def test_validation_flags_invented_words():
+    errors = validate(FILLER, FILLER + " శ్రీమన్నారాయణుడు", [])
+    assert [e["type"] for e in errors] == ["no_invention"]
+
+
+def test_validation_flags_headings():
+    for heading in ("# ధర్మం", "**ధర్మం**", "1. ధర్మం", "THE MEANING OF DHARMA HERE"):
+        errors = validate(FILLER, f"{heading}\n{FILLER}", [])
+        assert "no_headings" in [e["type"] for e in errors], heading
+
+
+def test_validation_flags_dropped_text():
+    transcript = " ".join([FILLER] * 10)
+    errors = validate(transcript, FILLER, [])
+    assert "completeness" in [e["type"] for e in errors]
+
+
+def test_validation_flags_reordered_text():
+    a, b = "మొదటి వాక్యం", "రెండవ వాక్యం"
+    errors = validate(f"{a} {b}", f"{b}\n\n{a}", [])
+    assert [e["type"] for e in errors] == ["not_verbatim"]
+
+
+def test_validation_flags_unverified_shloka():
+    errors = validate(FILLER, FILLER, [{"text": "పరిత్రాణాయ సాధూనాం"}])
+    assert [e["type"] for e in errors] == ["verbatim_shlokas"]
+
+
+# ── term fixes ────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("text, expected", [
+    ("పెరుమాల్ చెప్పారు", "పెరుమాళ్ళ (பெருமாள்) చెప్పారు"),
+    ("తొండలడి పొడి ఆడు రోజు", "తొండరడిప్పొడి ఆళ్వార్ (தொண்டரடிப்பொடி ஆழ்வார்) రోజు"),
+    ("ఆడు సేవ", "ఆళ్వార్ (ஆழ்வார்) సేవ"),
+    # Must not fire inside longer words (\b used to split at vowel signs)
+    ("పెరుమాలు వచ్చారు", "పెరుమాలు వచ్చారు"),
+    ("పెరియవార్చాన్ పిల్లై", "పెరియవార్చాన్ పిల్లై"),
+    ("వాడు రోజు", "వాడు రోజు"),
+])
+def test_term_fixes_respect_telugu_word_boundaries(text, expected):
+    assert _apply_term_fixes(text)[0] == expected
+
+
+# ── Sarvam transcription ──────────────────────────────────────────────────────
+
+def test_sarvam_retries_caches_and_marks_gaps(monkeypatch, tmp_path):
+    import types
+    from agents import transcription_agent as ta
+
+    parts = []
+    for i in range(12):
+        p = tmp_path / f"part{i}.mp3"
+        p.write_bytes(f"audio-{i}".encode() * 200)
+        parts.append(str(p))
+    calls = {}
+
+    def transcribe(file, **_):
+        name = os.path.basename(file.name)
+        calls[name] = calls.get(name, 0) + 1
+        if name == "part3.mp3" and calls[name] == 1:
+            raise RuntimeError("503 temporarily unavailable")  # recovers on retry
+        if name == "part7.mp3":
+            raise RuntimeError("500 internal error")           # never recovers
+        return types.SimpleNamespace(transcript=f"text{name[4:-4]}")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ta, "sarvam_client", types.SimpleNamespace(speech_to_text=types.SimpleNamespace(transcribe=transcribe)))
+    monkeypatch.setattr(ta, "_to_mp3_16k", lambda p: p)
+    monkeypatch.setattr(ta, "_split_audio", lambda p, max_sec: parts)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    text, _, _, gaps = ta._sarvam_stt("x.mp3")
+    expected = " ".join("[?]" if i == 7 else f"text{i}" for i in range(12))
+    assert text == expected and gaps == 1
+    assert calls["part3.mp3"] == 2 and calls["part7.mp3"] == 3
+
+    # Second run: every successful piece comes from the cache, only the gap is retried
+    before = dict(calls)
+    assert ta._sarvam_stt("x.mp3")[0] == expected
+    assert {k: calls[k] - before[k] for k in calls if calls[k] != before[k]} == {"part7.mp3": 3}
+
+
+# ── upload de-duplication ─────────────────────────────────────────────────────
+
+def test_identical_upload_while_processing_is_not_queued_again(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    import api
+
+    monkeypatch.chdir(tmp_path)
+    ran = []
+    # Simulate a pipeline that is still running: record the call, never release the hash
+    monkeypatch.setattr(api, "run_pipeline_from_audio", lambda *a: ran.append(a))
+    monkeypatch.setattr(api, "_active_upload_hashes", set())
+    client = TestClient(api.app)
+    audio = b"same audio bytes" * 100
+
+    first = client.post("/upload-audio", files={"file": ("talk.mp3", audio)}).json()
+    second = client.post("/upload-audio", files={"file": ("talk.mp3", audio)}).json()
+    other = client.post("/upload-audio", files={"file": ("other.mp3", audio + b"x")}).json()
+
+    assert first["status"] == "processing" and other["status"] == "processing"
+    assert second == {"status": "duplicate"}
+    assert len(ran) == 2
+
+
+def test_upload_hash_released_when_pipeline_finishes(monkeypatch):
+    import api
+    monkeypatch.setattr(api, "_run_pipeline_from_audio", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    api._active_upload_hashes.add("abc")
+    with pytest.raises(RuntimeError):
+        api.run_pipeline_from_audio("x.mp3", 0, 0, "abc")
+    assert "abc" not in api._active_upload_hashes
+
+
+# ── regressions from the first real 2-hour run ────────────────────────────────
+
+def test_verse_cut_mid_word_or_before_punctuation_is_widened(monkeypatch):
+    transcript = f"{FILLER} తం తమేవైతి కౌంతేయః. మరణించిన {FILLER} చెప్పారు గోవు పవిత్రమైన {FILLER}"
+    found = _detect(monkeypatch, transcript, [
+        {"language": "Sanskrit", "text": "తం తమేవైతి కౌంతేయ", "confidence": 0.9},   # stops before ః.
+        {"language": "Sanskrit", "text": "పారు గోవు పవిత్రమైన", "confidence": 0.9},  # starts inside చెప్పారు
+    ])
+    assert [s["text"] for s in found] == ["తం తమేవైతి కౌంతేయః.", "చెప్పారు గోవు పవిత్రమైన"]
+    notes = format_notes(transcript, found)
+    assert validate(transcript, notes, found) == []
+
+
+def test_formatter_widens_spans_even_for_unexpanded_input():
+    transcript = f"{FILLER} తం తమేవైతి కౌంతేయః. {FILLER}"
+    shlokas = [{"text": "తం తమేవైతి కౌంతేయ", "original": ""}]
+    assert validate(transcript, format_notes(transcript, shlokas), shlokas) == []
+
+
+def test_devanagari_verse_gets_telugu_second_line(monkeypatch):
+    transcript = f"{FILLER} ॐ हरये नमः। {FILLER}"
+    found = _detect(monkeypatch, transcript, [{"language": "Sanskrit", "text": "ॐ हरये नमः।", "confidence": 0.9}])
+    assert found[0]["original"] == "ఓం హరయే నమః।"
+    assert '**"ॐ हरये नमः।"** (ఓం హరయే నమః।)' in format_notes(transcript, found).split("\n")
+
+
+# ── Groq key rotation ─────────────────────────────────────────────────────────
+
+def test_groq_switches_key_immediately_on_rate_limit(monkeypatch):
+    from agents import groq_llm_client as g
+    for env, val in {"GROQ_API_KEY_STRUCTURER": "k1", "GROQ_API_KEY_SPARE1": "k2", "GROQ_API_KEY_SPARE2": "k1",
+                     "GROQ_API_KEY_SHLOKA": "", "GROQ_API_KEY_NOTES": ""}.items():
+        monkeypatch.setenv(env, val)
+    monkeypatch.setattr(g, "_cooldown_until", {})
+    sleeps, used = [], []
+    monkeypatch.setattr(g.time, "sleep", sleeps.append)
+
+    def fake(key, *a):
+        used.append(key)
+        if key == "k1":
+            raise RuntimeError("429 Rate limit reached ... Please try again in 1m3.5s")
+        return "ok"
+    monkeypatch.setattr(g, "_request", fake)
+
+    assert g.call("p", "GROQ_API_KEY_STRUCTURER") == "ok"
+    assert used == ["k1", "k2"] and sleeps == []          # no sleeping while another key works
+    assert g.call("p", "GROQ_API_KEY_STRUCTURER") == "ok"
+    assert used[2:] == ["k2"]                              # k1 still cooling down → skipped
+
+
+def test_groq_waits_only_when_every_key_is_limited(monkeypatch):
+    from agents import groq_llm_client as g
+    for env in g._KEY_ENVS:
+        monkeypatch.setenv(env, "")
+    monkeypatch.setenv("GROQ_API_KEY_NOTES", "only")
+    monkeypatch.setattr(g, "_cooldown_until", {})
+    sleeps, calls = [], []
+    monkeypatch.setattr(g.time, "sleep", lambda s: (sleeps.append(s), g._cooldown_until.clear()))
+
+    def fake(key, *a):
+        calls.append(key)
+        if len(calls) == 1:
+            raise RuntimeError("429 Please try again in 7.2s")
+        return "ok"
+    monkeypatch.setattr(g, "_request", fake)
+    assert g.call("p", "GROQ_API_KEY_NOTES") == "ok"
+    assert len(sleeps) == 1 and 7 < sleeps[0] <= 9

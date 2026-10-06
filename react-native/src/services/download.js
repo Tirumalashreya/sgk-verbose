@@ -18,6 +18,8 @@ function buildHTML(session, forPrint = false) {
   const noteBlocks = notes.split('\n').map(line => {
     const t = line.trim();
     if (!t) return '<br/>';
+    const sm = t.match(/^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/);
+    if (sm) return `<p class="shloka-text"><strong>"${sm[1]}"</strong>${sm[2] ? `<br/><span class="shloka-original">${sm[2]}</span>` : ''}</p>`;
     const hm = t.match(/^\*{1,2}(.+?)\*{1,2}$/);
     if (hm) return `<h3>${hm[1].trim()}</h3>`;
     return `<p>${t}</p>`;

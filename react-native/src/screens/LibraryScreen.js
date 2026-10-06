@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, Pressable, TextInput, Modal, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { C, F } from '../theme';
-import { startSession, getSessions, startLive, uploadAudio } from '../services/api';
+import { startSession, getSessions } from '../services/api';
 
 function Divider() {
   return (
@@ -31,11 +31,10 @@ function LangToggle({ lang, setLang }) {
   );
 }
 
-export default function LibraryScreen({ go, t, lang, setLang }) {
+export default function LibraryScreen({ go, t, lang, setLang, upload, setUpload }) {
   const [showPaste, setShowPaste] = useState(false);
   const [url, setUrl]             = useState('');
   const [loading, setLoading]     = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [sessions, setSessions]   = useState([]);
 
   useEffect(() => {
@@ -49,23 +48,19 @@ export default function LibraryScreen({ go, t, lang, setLang }) {
     } catch {}
   };
 
+  const uploadBusy = upload && (upload.status === 'uploading' || upload.status === 'processing');
+
   const handleUploadAudio = () => {
+    // A file is already in — show its progress instead of offering a second upload
+    if (uploadBusy) return go('live');
+    if (upload?.status === 'done') { setUpload(null); return go('history'); }
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'audio/*,video/webm';
-    input.onchange = async (e) => {
+    input.onchange = (e) => {
       const file = e.target.files[0];
-      if (!file) return;
-      setUploading(true);
-      try {
-        await startLive();
-        await uploadAudio(file);
-        go('live');
-      } catch (err) {
-        console.error('Upload failed:', err);
-      } finally {
-        setUploading(false);
-      }
+      // The Live screen does the upload so it can show progress for it
+      if (file) go('live', { upload: file });
     };
     input.click();
   };
@@ -153,10 +148,26 @@ export default function LibraryScreen({ go, t, lang, setLang }) {
           <Text style={{ fontSize: 18 }}>🎵</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontFamily: F.sansSemi, fontSize: 14, color: C.ink }}>Upload audio file</Text>
-          <Text style={{ fontSize: 11.5, color: C.muted, marginTop: 3 }}>MP3, WAV, M4A, WebM → Telugu notes</Text>
+          {uploadBusy ? (
+            <>
+              <Text style={{ fontFamily: F.sansSemi, fontSize: 14, color: C.ink }} numberOfLines={1}>
+                {upload.status === 'uploading' ? `Uploading ${upload.name}…` : `✓ Uploaded ${upload.name}`}
+              </Text>
+              <Text style={{ fontSize: 11.5, color: C.muted, marginTop: 3 }}>Processing — tap to view progress. No need to upload again.</Text>
+            </>
+          ) : upload?.status === 'done' ? (
+            <>
+              <Text style={{ fontFamily: F.sansSemi, fontSize: 14, color: C.ink }} numberOfLines={1}>✓ Notes ready for {upload.name}</Text>
+              <Text style={{ fontSize: 11.5, color: C.muted, marginTop: 3 }}>Tap to open in History</Text>
+            </>
+          ) : (
+            <>
+              <Text style={{ fontFamily: F.sansSemi, fontSize: 14, color: C.ink }}>Upload audio file</Text>
+              <Text style={{ fontSize: 11.5, color: C.muted, marginTop: 3 }}>MP3, WAV, M4A, WebM → Telugu notes</Text>
+            </>
+          )}
         </View>
-        {uploading
+        {uploadBusy
           ? <ActivityIndicator color={C.maroon} size="small" />
           : <Text style={{ fontSize: 18, color: C.gold }}>›</Text>}
       </Pressable>

@@ -2,6 +2,11 @@ from graph.state import VerbaState
 import yt_dlp
 import os
 import glob
+import shutil
+
+# yt-dlp needs a JS runtime for YouTube. Override with YTDLP_NODE_PATH, else use node on PATH.
+_NODE_PATH = os.getenv("YTDLP_NODE_PATH") or shutil.which("node")
+_JS_RUNTIMES = {"node": {"path": _NODE_PATH} if _NODE_PATH else {}}
 
 def listener_agent(state: VerbaState) -> VerbaState:
     if state.get("audio_path"):
@@ -16,7 +21,7 @@ def listener_agent(state: VerbaState) -> VerbaState:
     info_opts = {
         "quiet": True,
         "noplaylist": True,
-        "js_runtimes": {"node": {"executable": "/Users/yaseswini/.nvm/versions/node/v18.20.8/bin/node"}},
+        "js_runtimes": _JS_RUNTIMES,
     }
     with yt_dlp.YoutubeDL(info_opts) as ydl:
         info = ydl.extract_info(youtube_url, download=False)
@@ -48,7 +53,7 @@ def listener_agent(state: VerbaState) -> VerbaState:
             "subtitlesformat": "vtt",
             "skip_download": True,
             "outtmpl": caption_base,
-            "js_runtimes": {"node": {"executable": "/Users/yaseswini/.nvm/versions/node/v18.20.8/bin/node"}},
+            "js_runtimes": _JS_RUNTIMES,
         }
         try:
             with yt_dlp.YoutubeDL(cap_opts) as ydl:
@@ -84,7 +89,7 @@ def listener_agent(state: VerbaState) -> VerbaState:
         "noplaylist": True,
         "outtmpl": f"audio_input/chunk_{chunk_index}.%(ext)s",
         "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
-        "js_runtimes": {"node": {"executable": "/Users/yaseswini/.nvm/versions/node/v18.20.8/bin/node"}},
+        "js_runtimes": _JS_RUNTIMES,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",

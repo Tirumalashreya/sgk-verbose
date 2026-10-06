@@ -28,5 +28,10 @@ while chunk_index < MAX_CHUNKS:
 
     print(f"Chunk {chunk_index} done.")
     print(f"Summary: {result.get('summary', '')[:200]}")
+    print(f"Needs manual review: {result.get('needs_manual_review')}")
+
+    # Captions cover the whole video; stop instead of re-transcribing it from audio
+    if result.get("caption_text") or result.get("error") == "video_ended":
+        break
 
     chunk_index += 1

@@ -1,5 +1,6 @@
-const API_BASE = 'http://localhost:8000';
-const WS_URL = 'ws://localhost:8000/ws';
+// Backend URL — override with EXPO_PUBLIC_API_BASE (e.g. http://localhost:8001)
+export const API_BASE = process.env.EXPO_PUBLIC_API_BASE || 'http://localhost:8000';
+const WS_URL = API_BASE.replace(/^http/, 'ws') + '/ws';
 
 export const startSession = async (youtubeUrl) => {
   const res = await fetch(`${API_BASE}/start-session`, {

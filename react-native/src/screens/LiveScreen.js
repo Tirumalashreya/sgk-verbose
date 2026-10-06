@@ -4,19 +4,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { C, F, ACHARYA, acharyaPhoto } from '../theme';
 import Waveform from '../components/Waveform';
-import { createWebSocket, stopSession } from '../services/api';
+import { API_BASE, createWebSocket, stopSession } from '../services/api';
 
-const API_BASE = 'http://localhost:8000';
 
 // Pipeline stages in the order they run on the backend
 const STAGES = [
   { key: 'listener',             label: 'Preparing'    },
   { key: 'transcription',        label: 'Transcribing' },
   { key: 'correction',           label: 'Correcting'   },
-  { key: 'harmony',              label: 'Melody'       },
   { key: 'shloka_detector',      label: 'Shlokas'      },
   { key: 'knowledge_structurer', label: 'Structuring'  },
-  { key: 'notes_generator',      label: 'Notes'        },
+  { key: 'summary',              label: 'Summary'      },
+  { key: 'formatting',           label: 'Notes'        },
+  { key: 'validation',           label: 'Verifying'    },
   { key: 'memory',               label: 'Saving'       },
 ];
 const STAGE_IDX = Object.fromEntries(STAGES.map((s, i) => [s.key, i]));
@@ -25,11 +25,12 @@ const STAGE_IDX = Object.fromEntries(STAGES.map((s, i) => [s.key, i]));
 const STAGE_MESSAGES = {
   listener:             'Preparing audio...',
   transcription:        'Transcribing audio into Telugu text...',
-  correction:           'Correcting transcription errors...',
-  harmony:              'Analysing melodic & chanting regions...',
+  correction:           'Fixing known term misspellings...',
   shloka_detector:      'Detecting Sanskrit shlokas & Tamil pasurams...',
   knowledge_structurer: 'Structuring knowledge from the pravachanam...',
-  notes_generator:      'Generating structured notes — this may take a few minutes...',
+  summary:              'Writing a short summary...',
+  formatting:           'Arranging the transcript into paragraphs...',
+  validation:           'Checking notes match the transcript word-for-word...',
   memory:               'Saving to library...',
 };
 
@@ -136,6 +137,8 @@ const makeBanner = (step, icon, label, sub, color) => ({
   kind: 'stage_banner', step, icon, label, sub, color,
 });
 
+const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
+
 function chunkToLines(data) {
   const raw = data.notes || data.transcript || '';
   const shlokas = data.shlokas || [];
@@ -152,6 +155,14 @@ function chunkToLines(data) {
   for (const line of raw.split('\n')) {
     const t = line.trim();
     if (!t) { flushPara(); continue; }
+    // **"verse"** (devanagari) — shloka line from the backend formatter
+    const sm = t.match(SHLOKA_LINE);
+    if (sm) {
+      flushPara();
+      const meta = shlokas.find(s => s.text?.trim() === sm[1].trim());
+      result.push({ kind: 'shloka', ref: meta?.type || 'Shloka', dev: sm[1], original: sm[2] || '' });
+      continue;
+    }
     const hm = t.match(/^\*{1,2}(.+?)\*{1,2}$/);
     if (hm) { flushPara(); result.push({ kind: 'heading', te: hm[1].trim() }); continue; }
     const hit = shlokas.find(s => t.includes(s.text?.trim()?.slice(0, 20)));
@@ -166,7 +177,7 @@ function chunkToLines(data) {
   return result;
 }
 
-export default function LiveScreen({ go, t, sessionUrl }) {
+export default function LiveScreen({ go, t, sessionUrl, pendingUpload, clearPendingUpload, upload, setUpload }) {
   const insets = useSafeAreaInsets();
 
   // session state
@@ -192,6 +203,7 @@ export default function LiveScreen({ go, t, sessionUrl }) {
   const scRef        = useRef(null);
   const wsRef        = useRef(null);
   const timerRef     = useRef(null);
+  const fileUploadRef = useRef(false); // read by the WebSocket handler, which holds a stale closure
   const mediaRef     = useRef(null);
   const pollRef      = useRef(null);
   const sessionCount = useRef(0);
@@ -262,18 +274,7 @@ export default function LiveScreen({ go, t, sessionUrl }) {
       });
 
       // File uploads: auto-complete (no manual Stop needed)
-      if (isFileUpload) {
-        stopPolling();
-        setDoneStages(new Set(STAGES.map(s => s.key)));
-        setActiveStage(null);
-        setDone(true);
-        clearInterval(timerRef.current);
-        setTimeout(() => {
-          setActive(false);
-          setIsFileUpload(false);
-          go('history');
-        }, 2000);
-      }
+      if (fileUploadRef.current) finishUpload();
     }
 
     if (data.type === 'session_complete') {
@@ -287,9 +288,28 @@ export default function LiveScreen({ go, t, sessionUrl }) {
     }
   };
 
-  const startTimer = () => {
-    setClock(0);
-    timerRef.current = setInterval(() => setClock(c => c + 1), 1000);
+  const startTimer = (startedAt = Date.now()) => {
+    clearInterval(timerRef.current);
+    const tick = () => setClock(Math.floor((Date.now() - startedAt) / 1000));
+    tick();
+    timerRef.current = setInterval(tick, 1000);
+  };
+
+  // File upload finished (WebSocket result or the app-level session poll)
+  const finishUpload = () => {
+    if (!fileUploadRef.current) return;
+    fileUploadRef.current = false;
+    stopPolling();
+    setDoneStages(new Set(STAGES.map(s => s.key)));
+    setActiveStage(null);
+    setDone(true);
+    clearInterval(timerRef.current);
+    setUpload?.(null);
+    setTimeout(() => {
+      setActive(false);
+      setIsFileUpload(false);
+      go('history');
+    }, 2000);
   };
 
   const startWebSocket = () => {
@@ -343,29 +363,82 @@ export default function LiveScreen({ go, t, sessionUrl }) {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'audio/*,.ogg,.m4a,.mp3,.wav,.webm';
-    input.onchange = async (e) => {
+    input.onchange = (e) => {
       const file = e.target.files[0];
-      if (!file) return;
-      try { await stopSession(); } catch (_) {}
-      setIsFileUpload(true);
-      setActive(true);
-      setLines([]);
-      setTranscript('');
-      setShlokas([]);
-      setNotes('');
-      setDoneStages(new Set());
-      setActiveStage('listener');
-      setDone(false);
-      setTitle(file.name.replace(/\.[^.]+$/, ''));
-      startTimer();
-      startWebSocket();
-      const countRes = await fetch(`${API_BASE}/sessions`);
-      const countData = await countRes.json();
-      startPolling((countData.sessions || []).length);
-      await sendAudioChunk(file, file.name);
+      if (file) uploadFile(file);
     };
     input.click();
   };
+
+  const showUploadView = (name, startedAt) => {
+    fileUploadRef.current = true;
+    setIsFileUpload(true);
+    setActive(true);
+    setDone(false);
+    setTitle(name.replace(/\.[^.]+$/, ''));
+    startTimer(startedAt);
+    startWebSocket();
+  };
+
+  const uploadFile = async (file) => {
+    // One upload at a time — a second one would queue the whole pipeline again
+    if (upload && (upload.status === 'uploading' || upload.status === 'processing')) return;
+    try { await stopSession(); } catch (_) {}
+    setIsFileUpload(true);
+    setActive(true);
+    setLines([]);
+    setTranscript('');
+    setShlokas([]);
+    setNotes('');
+    setDoneStages(new Set());
+    setActiveStage('listener');
+    setDone(false);
+    const startedAt = Date.now();
+    showUploadView(file.name, startedAt);
+    let knownCount = 0;
+    try {
+      const countData = await (await fetch(`${API_BASE}/sessions`)).json();
+      knownCount = (countData.sessions || []).length;
+    } catch (_) {}
+    setUpload?.({ name: file.name, status: 'uploading', startedAt, knownCount });
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const res = await fetch(`${API_BASE}/upload-audio`, { method: 'POST', body: form });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setUpload?.({ name: file.name, status: 'processing', startedAt, knownCount,
+                    duplicate: data.status === 'duplicate' });
+    } catch (e) {
+      console.warn('[live] upload failed', e);
+      setUpload?.({ name: file.name, status: 'error', startedAt, knownCount });
+    }
+  };
+
+  // Coming back to this screen while an upload is still running → show its progress
+  useEffect(() => {
+    if (upload && (upload.status === 'uploading' || upload.status === 'processing') && !active) {
+      showUploadView(upload.name, upload.startedAt);
+    }
+    return () => {
+      clearInterval(timerRef.current);
+      clearInterval(pollRef.current);
+      wsRef.current?.close();
+    };
+  }, []);
+
+  // App-level poll noticed the finished session
+  useEffect(() => {
+    if (upload?.status === 'done') finishUpload();
+  }, [upload?.status]);
+
+  // File picked on the Library screen — run it through the same tracked flow
+  useEffect(() => {
+    if (!pendingUpload) return;
+    const file = pendingUpload;
+    clearPendingUpload?.();
+    uploadFile(file);
+  }, [pendingUpload]);
 
   // ── Start mic recording ────────────────────────────────────────────────────
   const startRecording = async () => {
@@ -519,6 +592,20 @@ export default function LiveScreen({ go, t, sessionUrl }) {
           <Text style={{ fontFamily: F.serif, fontSize: 18, color: '#f6ecd6' }}>{title || 'Live Pravachanam'}</Text>
           <Text style={{ fontSize: 11, color: '#b09a73', marginTop: 2 }}>{ACHARYA} · {t('liveTag')}</Text>
         </View>
+
+        {/* Upload status — makes it obvious the file is already in, so it isn't uploaded twice */}
+        {isFileUpload && upload && (
+          <View style={{ alignSelf: 'center', marginTop: 4, marginBottom: 6, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 99,
+                         backgroundColor: upload.status === 'error' ? 'rgba(224,80,80,0.15)' : 'rgba(127,221,127,0.10)',
+                         borderWidth: 1, borderColor: upload.status === 'error' ? 'rgba(224,80,80,0.45)' : 'rgba(127,221,127,0.35)' }}>
+            <Text style={{ fontSize: 12, fontFamily: F.sansSemi, color: upload.status === 'error' ? '#f0a0a0' : '#a8e6a8' }}>
+              {upload.status === 'uploading' ? `⇪ Uploading ${upload.name}…`
+                : upload.status === 'error' ? `⚠ Upload of ${upload.name} failed — try again`
+                : upload.duplicate ? `✓ ${upload.name} is already being processed — no need to upload again`
+                : `✓ Uploaded ${upload.name} — processing, no need to upload again`}
+            </Text>
+          </View>
+        )}
 
         {/* Content area */}
         <ScrollView

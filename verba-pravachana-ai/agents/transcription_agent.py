@@ -15,7 +15,6 @@ _WHISPER_KEYS = [k for k in [
     os.getenv("GROQ_API_KEY_WHISPER"),
     os.getenv("GROQ_API_KEY_WHISPER2"),
 ] if k]
-groq_client = Groq(api_key=_WHISPER_KEYS[0])
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 sarvam_client = SarvamAI(api_subscription_key=SARVAM_API_KEY) if SARVAM_API_KEY else None
 
@@ -63,21 +62,53 @@ def _google_stt(path: str) -> str:
     return "\n".join(lines)
 
 
-def _sarvam_transcribe_chunk(args):
-    i, chunk_path = args
+_SARVAM_CACHE_DIR = os.path.join("audio_input", ".sarvam_cache")
+_SARVAM_FATAL = ("402", "insufficient_quota", "No credits", "401", "403")
+GAP_MARKER = "[?]"  # stands in for audio that could not be transcribed
+
+
+def _sarvam_cache_path(chunk_path: str) -> str:
+    """Cache key is the audio content, so re-uploads and restarts never pay twice."""
+    import hashlib
     with open(chunk_path, "rb") as f:
-        response = sarvam_client.speech_to_text.transcribe(
-            file=f,
-            model="saaras:v3",
-            mode="transcribe",
-        )
+        digest = hashlib.sha1(f.read()).hexdigest()
+    return os.path.join(_SARVAM_CACHE_DIR, f"saaras-v3-{digest}.txt")
+
+
+def _sarvam_transcribe_chunk(args, attempts: int = 3):
+    import time as _time
+    i, chunk_path = args
+    cache = _sarvam_cache_path(chunk_path)
+    if os.path.exists(cache):
+        with open(cache, encoding="utf-8") as f:
+            return i, f.read()
+
+    for attempt in range(attempts):
+        try:
+            with open(chunk_path, "rb") as f:
+                response = sarvam_client.speech_to_text.transcribe(
+                    file=f,
+                    model="saaras:v3",
+                    mode="transcribe",
+                )
+            break
+        except Exception as e:
+            if any(code in str(e) for code in _SARVAM_FATAL) or attempt == attempts - 1:
+                raise
+            print(f"  [sarvam chunk {i}] attempt {attempt + 1} failed, retrying: {str(e)[:100]}")
+            _time.sleep(2 * (attempt + 1))
+
     text = (response.transcript or "").strip()
+    os.makedirs(_SARVAM_CACHE_DIR, exist_ok=True)
+    with open(cache, "w", encoding="utf-8") as f:
+        f.write(text)
     print(f"  [sarvam chunk {i}] {text[:100]}")
     return i, text
 
 
 def _sarvam_stt(path: str) -> tuple:
-    """Transcribe using Sarvam AI saaras:v3 — parallel sub-chunk calls."""
+    """Transcribe using Sarvam AI saaras:v3 — parallel sub-chunk calls.
+    Returns (text, language, segments, gap_count)."""
     print("[transcription] Sarvam AI (saaras:v3)...")
     mp3_path = _to_mp3_16k(path)
     chunks = _split_audio(mp3_path, max_sec=28)
@@ -87,21 +118,32 @@ def _sarvam_stt(path: str) -> tuple:
         _sarvam_transcribe_chunk((0, chunks[0]))
     except Exception as e:
         msg = str(e)
-        if any(code in msg for code in ["402", "insufficient_quota", "No credits", "401", "403"]):
+        if any(code in msg for code in _SARVAM_FATAL):
             print(f"[transcription] Sarvam quota/auth error — skipping: {msg[:120]}")
             raise
 
-    results = {}
-    try:
-        with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as ex:
-            for i, text in ex.map(_sarvam_transcribe_chunk, enumerate(chunks), timeout=60):
-                results[i] = text
-    except Exception as e:
-        print(f"[transcription] Sarvam partial failure: {e} — using {len(results)}/{len(chunks)} chunks")
+    # No overall deadline: a long recording simply takes longer. (A batch-wide
+    # timeout used to cut off everything after the first ~60s of API time and
+    # silently return a partial transcript.)
+    results, failed = {}, []
+    with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as ex:
+        futures = {ex.submit(_sarvam_transcribe_chunk, (i, c)): i for i, c in enumerate(chunks)}
+        for fut in as_completed(futures):
+            i = futures[fut]
+            try:
+                results[i] = fut.result()[1]
+            except Exception as e:
+                failed.append(i)
+                print(f"  [sarvam chunk {i}] FAILED after retries: {str(e)[:120]}")
+            done = len(results) + len(failed)
+            if done % 25 == 0 or done == len(chunks):
+                print(f"[transcription] Sarvam progress {done}/{len(chunks)}")
 
-    full_text = " ".join(results[i] for i in sorted(results) if results[i])
-    print(f"[transcription] Sarvam done ({len(full_text)} chars)")
-    return full_text, "te", []
+    # Failed pieces stay visible in the transcript instead of silently vanishing
+    pieces = [results[i] if i in results else GAP_MARKER for i in range(len(chunks))]
+    full_text = " ".join(p for p in pieces if p)
+    print(f"[transcription] Sarvam done ({len(full_text)} chars, {len(failed)} gap(s))")
+    return full_text, "te", [], len(failed)
 
 
 def _whisper_chunk(path: str):
@@ -113,6 +155,8 @@ def _whisper_chunk(path: str):
         print(f"[transcription] skipping tiny file {path}")
         return None
 
+    if not _WHISPER_KEYS:
+        raise RuntimeError("No Groq Whisper key set (GROQ_API_KEY_WHISPER) — cannot fall back to Whisper")
     attempts = len(_WHISPER_KEYS) * 3  # 3 tries per key
     for attempt in range(attempts):
         key = _WHISPER_KEYS[attempt % len(_WHISPER_KEYS)]
@@ -222,8 +266,9 @@ def transcription_agent(state: VerbaState) -> VerbaState:
     # Try Sarvam AI first
     if SARVAM_API_KEY:
         try:
-            text, lang, segments = _sarvam_stt(path)
-            if text.strip():
+            text, lang, segments, gaps = _sarvam_stt(path)
+            if text.strip() and text.replace(GAP_MARKER, "").strip():
+                state["transcription_gaps"] = gaps
                 state["transcript"] = text
                 state["detected_language"] = lang
                 state["transcript_segments"] = segments

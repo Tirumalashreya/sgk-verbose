@@ -125,3 +125,5 @@ xxhash==3.7.0
 yt-dlp==2026.3.17
 zipp==3.23.1
 zstandard==0.25.0
+indic-transliteration
+sarvamai

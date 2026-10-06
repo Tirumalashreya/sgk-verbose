@@ -71,6 +71,22 @@ def _save_sessions():
 
 import json
 
+
+def _review_fields(result: dict, chunk_index: int) -> dict:
+    """Validation outcome for one chunk, in the shape stored on sessions."""
+    return {
+        "needs_manual_review": bool(result.get("needs_manual_review")),
+        "validation_errors": [{**e, "chunk_index": chunk_index} for e in (result.get("validation_errors") or [])],
+    }
+
+
+def _merge_review(session: dict, result: dict, chunk_index: int):
+    """Fold one chunk's validation outcome into a multi-chunk session."""
+    review = _review_fields(result, chunk_index)
+    session["needs_manual_review"] = bool(session.get("needs_manual_review")) or review["needs_manual_review"]
+    session["validation_errors"] = (session.get("validation_errors") or []) + review["validation_errors"]
+
+
 manager = ConnectionManager()
 event_loop: asyncio.AbstractEventLoop | None = None
 stop_event = threading.Event()
@@ -80,6 +96,7 @@ _live_session_id: int = 0
 _pipeline_semaphore = threading.Semaphore(1)  # one pipeline at a time — Ollama is single-threaded
 _live_recording_session: dict | None = None
 _stopped_session_id: str | None = None  # ID of session saved at Stop time, so pipeline can merge into it
+_active_upload_hashes: set[str] = set()  # uploads queued or processing — identical re-uploads are ignored
 
 
 @app.on_event("startup")
@@ -217,7 +234,10 @@ async def reprocess(data: ReprocessRequest, background_tasks: BackgroundTasks):
 def _run_reprocess(chunk_index: int, audio_path: str, transcript: str):
     from agents.shloka_detect_agent import shloka_detect_agent
     from agents.knowledge_structurer_agent import knowledge_structurer_agent
-    from agents.notes_generator_agent import notes_generator_agent
+    from agents.summary_agent import summary_agent
+    from agents.formatting_agent import formatting_agent
+    from agents.validation_agent import validation_agent
+    from agents.memory_agent import memory_agent
 
     print(f"[reprocess] starting for chunk {chunk_index} ({len(transcript)} chars)...")
     state = {
@@ -237,7 +257,10 @@ def _run_reprocess(chunk_index: int, audio_path: str, transcript: str):
     }
     state = {**state, **shloka_detect_agent(state)}
     state = {**state, **knowledge_structurer_agent(state)}
-    state = {**state, **notes_generator_agent(state)}
+    state = {**state, **summary_agent(state)}
+    state = {**state, **formatting_agent(state)}
+    state = {**state, **validation_agent(state)}
+    state = {**state, **memory_agent(state)}
 
     chunk = {
         "id": str(uuid.uuid4()),
@@ -253,6 +276,7 @@ def _run_reprocess(chunk_index: int, audio_path: str, transcript: str):
         "segments": state.get("segments", []),
         "transcript": transcript,
         "youtube_url": None,
+        **_review_fields(state, chunk_index),
     }
     _save_chunk_result(audio_path, chunk)
 
@@ -261,7 +285,7 @@ def _run_reprocess(chunk_index: int, audio_path: str, transcript: str):
     updated = False
     for i, s in enumerate(sessions_store):
         if s.get("chunk_index") == chunk_index:
-            sessions_store[i] = {**s, **chunk, "id": s["id"]}
+            sessions_store[i] = {**s, **chunk, "id": s["id"], "title": s.get("title") or chunk["title"]}
             updated = True
             break
     if not updated:
@@ -276,6 +300,13 @@ def _run_reprocess(chunk_index: int, audio_path: str, transcript: str):
 @app.post("/upload-audio")
 async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     global _live_session_id
+    import hashlib
+    content = await file.read()
+    digest = hashlib.sha1(content).hexdigest()
+    if digest in _active_upload_hashes:
+        print(f"[upload] identical file already queued/processing — ignoring duplicate ({file.filename})")
+        return {"status": "duplicate"}
+    _active_upload_hashes.add(digest)
     _live_session_id += 1
     my_session_id = _live_session_id
     chunk_index = len(sessions_store)
@@ -283,18 +314,22 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
     ext = os.path.splitext(file.filename or "chunk.webm")[1] or ".webm"
     audio_path = f"audio_input/live_chunk_{chunk_index}{ext}"
     with open(audio_path, "wb") as f:
-        content = await file.read()
         f.write(content)
-    background_tasks.add_task(run_pipeline_from_audio, audio_path, chunk_index, my_session_id)
+    title = os.path.splitext(file.filename or "")[0] or None
+    background_tasks.add_task(run_pipeline_from_audio, audio_path, chunk_index, my_session_id, digest, title)
     return {"status": "processing", "chunk_index": chunk_index}
 
 
-def run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0):
-    with _pipeline_semaphore:
-        _run_pipeline_from_audio(audio_path, chunk_index, session_id)
+def run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0,
+                            digest: str | None = None, title: str | None = None):
+    try:
+        with _pipeline_semaphore:
+            _run_pipeline_from_audio(audio_path, chunk_index, session_id, title)
+    finally:
+        _active_upload_hashes.discard(digest)
 
 
-def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0):
+def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0, title: str | None = None):
     state = {
         "audio_path": audio_path,
         "youtube_url": None,
@@ -314,10 +349,11 @@ def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int 
         "listener": "Downloading Audio",
         "transcription": "Transcribing Audio",
         "correction": "Correcting Transcript",
-        "harmony": "Analysing Melody",
         "shloka_detector": "Detecting Shlokas",
         "knowledge_structurer": "Structuring Knowledge",
-        "notes_generator": "Generating Notes",
+        "summary": "Summarising",
+        "formatting": "Formatting Notes",
+        "validation": "Verifying Notes",
         "memory": "Saving to Memory",
     }
 
@@ -346,13 +382,13 @@ def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int 
                     _broadcast_stage_result({"stage": "transcription", "transcript": node_output["transcript"]})
                 elif node_name == "shloka_detector":
                     _broadcast_stage_result({"stage": "shlokas", "shlokas": node_output.get("shlokas") or []})
-                elif node_name == "notes_generator":
+                elif node_name == "formatting":
                     _broadcast_stage_result({"stage": "notes", "notes": node_output.get("notes") or "", "enhanced_notes": node_output.get("enhanced_notes") or "", "transliterated_notes": node_output.get("transliterated_notes") or ""})
         chunk = {
             "id": str(uuid.uuid4()),
             "type": "chunk_complete",
             "chunk_index": chunk_index,
-            "title": f"Live Recording – Chunk {chunk_index + 1}",
+            "title": title or f"Live Recording – Chunk {chunk_index + 1}",
             "summary": result.get("summary"),
             "notes": result.get("notes"),
             "enhanced_notes": result.get("enhanced_notes"),
@@ -360,8 +396,10 @@ def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int 
             "shlokas": result.get("shlokas", []),
             "segments": result.get("segments", []),
             "transcript": result.get("transcript"),
+            "raw_transcript": result.get("raw_transcript"),
             "youtube_url": None,
             "created_at": datetime.utcnow().isoformat(),
+            **_review_fields(result, chunk_index),
         }
         # Persist result so server restarts can recover it
         _save_chunk_result(audio_path, chunk)
@@ -374,6 +412,7 @@ def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int 
             _live_recording_session["segments"] = (_live_recording_session.get("segments") or []) + (chunk.get("segments") or [])
             if chunk.get("summary"):
                 _live_recording_session["summary"] = chunk["summary"]
+            _merge_review(_live_recording_session, result, chunk_index)
             # Auto-save after every chunk — don't wait for Stop button
             if not _live_recording_session.get("id"):
                 _live_recording_session["id"] = str(uuid.uuid4())
@@ -394,6 +433,7 @@ def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int 
                         s["segments"] = (s.get("segments") or []) + (chunk.get("segments") or [])
                         if chunk.get("summary"):
                             s["summary"] = chunk["summary"]
+                        _merge_review(s, result, chunk_index)
                         merged = True
                         break
                 if not merged:
@@ -431,6 +471,8 @@ def run_pipeline(youtube_url: str):
         "segments": [],
         "youtube_url": youtube_url,
         "created_at": datetime.utcnow().isoformat(),
+        "needs_manual_review": False,
+        "validation_errors": [],
     }
 
     while not stop_event.is_set():
@@ -477,6 +519,7 @@ def run_pipeline(youtube_url: str):
             merged["segments"] += result.get("segments") or []
             if result.get("summary"):
                 merged["summary"] = result["summary"]
+            _merge_review(merged, result, chunk_index)
 
             # Broadcast incremental chunk so Live screen updates in real time
             chunk = {
@@ -486,8 +529,21 @@ def run_pipeline(youtube_url: str):
                 "notes": result.get("notes"),
                 "shlokas": result.get("shlokas", []),
                 "transcript": result.get("transcript"),
+                **_review_fields(result, chunk_index),
             }
             asyncio.run_coroutine_threadsafe(manager.broadcast(chunk), event_loop)
+
+            # Captions cover the whole video in one go — downloading audio for the
+            # next chunks would transcribe everything after 2:00 a second time.
+            if result.get("caption_text"):
+                print("[pipeline] full video processed from YouTube captions")
+                sessions_store.append(merged)
+                _save_sessions()
+                asyncio.run_coroutine_threadsafe(
+                    manager.broadcast({"type": "session_complete", "total_chunks": chunk_index + 1}),
+                    event_loop,
+                )
+                break
 
         except Exception as e:
             import traceback

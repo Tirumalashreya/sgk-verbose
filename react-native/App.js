@@ -12,6 +12,7 @@ import { NotoSerifTelugu_400Regular, NotoSerifTelugu_500Medium } from '@expo-goo
 
 import { C } from './src/theme';
 import { makeT } from './src/i18n';
+import { getSessions } from './src/services/api';
 import TopNav from './src/components/TopNav';
 import LibraryScreen from './src/screens/LibraryScreen';
 import LiveScreen from './src/screens/LiveScreen';
@@ -38,6 +39,25 @@ export default function App() {
   };
   const [sessionUrl, setSessionUrl] = useState(null);
   const [sessionData, setSessionData] = useState(null);
+  const [pendingUpload, setPendingUpload] = useState(null);
+  // In-flight file upload {name, status: uploading|processing|done|error, startedAt, knownCount}.
+  // Lives here so it survives switching screens.
+  const [upload, setUpload] = useState(null);
+
+  // Notice when the uploaded file's session lands, whichever screen is open
+  useEffect(() => {
+    if (upload?.status !== 'processing') return;
+    const id = setInterval(async () => {
+      try {
+        const sessions = (await getSessions()).sessions || [];
+        const newest = sessions[sessions.length - 1];
+        if (sessions.length > upload.knownCount && (newest?.notes || newest?.transcript)) {
+          setUpload(u => (u ? { ...u, status: 'done' } : u));
+        }
+      } catch {}
+    }, 8000);
+    return () => clearInterval(id);
+  }, [upload?.status]);
   const t = makeT(lang);
 
   const [fontsLoaded] = useFonts({
@@ -59,11 +79,14 @@ export default function App() {
   const go = (s, params) => {
     if (params?.url) setSessionUrl(params.url);
     if (params?.session) setSessionData(params.session);
+    if (params?.upload) setPendingUpload(params.upload);
     setScreen(s);
   };
 
   const dark = screen === 'live';
-  const shared = { go, t, lang, setLang, sessionUrl, sessionData };
+  const shared = { go, t, lang, setLang, sessionUrl, sessionData,
+                   pendingUpload, clearPendingUpload: () => setPendingUpload(null),
+                   upload, setUpload };
 
   if (showIntro) {
     return (

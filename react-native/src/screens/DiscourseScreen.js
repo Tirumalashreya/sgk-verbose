@@ -19,6 +19,14 @@ function parseNoteParagraphs(text) {
     const line = raw.trim();
     if (!line) { flush(); continue; }
 
+    // **"verse"** (devanagari) → shloka block, placed where it was spoken
+    const shlokaMatch = line.match(/^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/);
+    if (shlokaMatch) {
+      flush();
+      blocks.push({ type: 'shloka', text: shlokaMatch[1].trim(), original: (shlokaMatch[2] || '').trim() });
+      continue;
+    }
+
     // **heading** → heading block
     const headingMatch = line.match(/^\*{1,2}(.+?)\*{1,2}$/);
     if (headingMatch) {
@@ -30,6 +38,17 @@ function parseNoteParagraphs(text) {
   }
   flush();
   return blocks;
+}
+
+function renderShloka(block, i) {
+  return (
+    <View key={i} style={{ marginBottom: 16, paddingLeft: 12, borderLeftWidth: 2, borderLeftColor: C.gold }}>
+      <Text style={{ fontFamily: F.telugu, fontSize: 15.5, lineHeight: 28, color: C.maroon, fontWeight: '600' }}>"{block.text}"</Text>
+      {block.original ? (
+        <Text style={{ fontFamily: F.dev, fontSize: 14.5, lineHeight: 26, color: C.inkSoft, marginTop: 4 }}>{block.original}</Text>
+      ) : null}
+    </View>
+  );
 }
 
 const TABS = ['transcript', 'notes', 'transliterated', 'shlokas'];
@@ -122,7 +141,7 @@ export default function DiscourseScreen({ go, t, lang, sessionData }) {
           <View>
             {notes ? (
               parseNoteParagraphs(notes).map((block, i) =>
-                block.type === 'heading' ? (
+                block.type === 'shloka' ? renderShloka(block, i) : block.type === 'heading' ? (
                   <Text key={i} style={{ fontFamily: F.serif, fontSize: 17, color: C.maroon, marginTop: i === 0 ? 0 : 22, marginBottom: 8 }}>
                     {block.text}
                   </Text>
@@ -143,7 +162,7 @@ export default function DiscourseScreen({ go, t, lang, sessionData }) {
           <View>
             {transliteratedNotes ? (
               parseNoteParagraphs(transliteratedNotes).map((block, i) =>
-                block.type === 'heading' ? (
+                block.type === 'shloka' ? renderShloka(block, i) : block.type === 'heading' ? (
                   <Text key={i} style={{ fontFamily: F.serif, fontSize: 17, color: C.maroon, marginTop: i === 0 ? 0 : 22, marginBottom: 8 }}>
                     {block.text}
                   </Text>

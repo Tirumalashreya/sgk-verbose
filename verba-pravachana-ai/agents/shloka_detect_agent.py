@@ -2,6 +2,8 @@ from graph.state import VerbaState
 import json, re
 from agents.groq_llm_client import call as _groq_call, STRONG_MODEL
 from agents.text_chunker import chunk_text
+from agents.verbatim import (normalize_ws, clean_verse, find_all, expand_to_words,
+                             has_devanagari, devanagari_to_telugu, telugu_to_devanagari)
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -39,6 +41,7 @@ def _detect_in_chunk(chunk_text_str: str) -> list:
 def shloka_detect_agent(state: VerbaState) -> VerbaState:
     print("[shloka_detect] starting...")
     transcript = state.get("transcript", "") or ""
+    norm_transcript = normalize_ws(transcript)
     chunks = chunk_text(transcript, chunk_size=3000, overlap=200)
     print(f"[shloka_detect] processing {len(chunks)} chunk(s)")
 
@@ -47,22 +50,58 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
     for i, chunk in enumerate(chunks):
         raw = _detect_in_chunk(chunk)
         for s in raw:
-            key = (s.get("text", "") or "")[:60]
-            if key not in seen_texts:
+            if not isinstance(s, dict):
+                continue
+            key = clean_verse(s.get("text", "") or "")
+            if key and key not in seen_texts:
                 seen_texts.add(key)
                 all_raw.append(s)
 
     shlokas = []
     for s in all_raw:
-        text = s.get("text", "")
-        lang = s.get("language", "")
-        conf = float(s.get("confidence", 0.0))
+        text = clean_verse(s.get("text", "") or "")
+        lang = s.get("language", "") or ""
+        try:
+            conf = float(s.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            conf = 0.0
         passed = _is_valid_shloka(text, lang, conf)
-        print(f"  shloka filter: lang={lang!r} conf={conf} passed={passed} text={text[:40]!r}")
-        if passed:
-            shlokas.append(s)
+        # Verbatim check: the LLM may only select text, never produce it
+        spans = find_all(norm_transcript, text) if passed else []
+        if passed and not spans:
+            print(f"  shloka REJECTED (not verbatim in transcript): {text[:40]!r}")
+            continue
+        print(f"  shloka filter: lang={lang!r} conf={conf} passed={passed} occurrences={len(spans)} text={text[:40]!r}")
+        if not passed:
+            continue
+        # LLM boundaries often stop mid-word or before attached punctuation —
+        # widen to whole words so the notes never split a word
+        a, b = expand_to_words(norm_transcript, *spans[0])
+        text = norm_transcript[a:b]
+        spans = find_all(norm_transcript, text)
+        is_sanskrit = "sanskrit" in lang.lower()
+        if has_devanagari(text):
+            # Sarvam already wrote this verse in Devanagari — show Telugu script as the second line
+            original = devanagari_to_telugu(text)
+        elif is_sanskrit:
+            # Telugu-script Sanskrit → Devanagari (same sounds, different script)
+            original = telugu_to_devanagari(text)
+        else:
+            # Tamil: Telugu→Tamil script is lossy, so no original is shown
+            original = ""
+        shlokas.append({
+            "language": lang,
+            "type": s.get("type") or ("Shloka" if is_sanskrit else "Paasuram"),
+            "text": text,
+            "original": original,
+            "confidence": conf,
+            "verified": True,
+            "start_index": spans[0][0],
+            "end_index": spans[0][1],
+            "occurrences": [list(sp) for sp in spans],
+        })
 
-    print(f"[shloka_detect] done — {len(all_raw)} detected, {len(shlokas)} passed filter")
+    print(f"[shloka_detect] done — {len(all_raw)} detected, {len(shlokas)} verified")
     return {"shlokas": shlokas}
 
 
@@ -91,17 +130,17 @@ EXAMPLE — correct boundary:
   WRONG (includes Telugu): "పచ్చేవామలైహోల్మేని ... అన్నం తొండలడి పొడి ఆడు రోజు సేవకాలం చేస్తున్నారు"
 
 RULES:
-- Text must appear word-for-word in the transcript (Telugu script transliteration of the verse)
+- Copy the verse EXACTLY as it appears in the transcript — same spelling, same words, same spacing
+- Do NOT correct, normalize, complete, or "fix" the verse, even if you know the canonical version
+- Any text that is not an exact substring of the transcript will be discarded
 - Do NOT add anything from your training knowledge
 - Cut off the shloka BEFORE Telugu explanation begins
 - If nothing qualifies, return empty array
 
 Return ONLY JSON:
-{{"shlokas": [{{"language": "Tamil", "text": "<verse only — no Telugu explanation>", "original": "<verse in original Tamil/Devanagari script>", "type": "Paasuram", "confidence": 0.9}}]}}
+{{"shlokas": [{{"language": "Tamil", "text": "<verse only, copied exactly from the transcript>", "type": "Paasuram", "confidence": 0.9}}]}}
 
-For "original" field:
-- If Tamil pasuram: write it in Tamil script (தமிழ்)
-- If Sanskrit shloka: write it in Devanagari script (देवनागरी)
+"language" must be "Sanskrit" or "Tamil". "type" must be "Shloka" (Sanskrit) or "Paasuram" (Tamil).
 
 TRANSCRIPT:
 {transcript}"""

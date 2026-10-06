@@ -15,7 +15,9 @@ const PIPELINE_STAGES = [
   { key: 'correction', label: 'Correcting Transcript' },
   { key: 'shloka_detector', label: 'Detecting Shlokas' },
   { key: 'knowledge_structurer', label: 'Structuring Knowledge' },
-  { key: 'notes_generator', label: 'Generating Notes' },
+  { key: 'summary', label: 'Summarising' },
+  { key: 'formatting', label: 'Formatting Notes' },
+  { key: 'validation', label: 'Verifying Notes' },
   { key: 'memory', label: 'Saving to Memory' },
 ];
 

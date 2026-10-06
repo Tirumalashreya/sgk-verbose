@@ -6,4 +6,6 @@ def rag_agent(query: str) -> str:
         query_texts=[query],
         n_results=3
     )
-    return results["documents"][0][0] if results["documents"] else "No relevant information found."
+    # documents is [[]] (not []) when the collection is empty
+    docs = (results.get("documents") or [[]])[0]
+    return docs[0] if docs else "No relevant information found."

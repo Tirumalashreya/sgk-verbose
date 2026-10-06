@@ -4,6 +4,8 @@ class VerbaState(TypedDict):
     audio_path: Optional[str]
     youtube_url: Optional[str] 
     transcript: Optional[str]
+    raw_transcript: Optional[str]          # ASR output before term fixes
+    transcription_gaps: Optional[int]      # audio pieces ASR failed on, shown as [?]
     detected_language: Optional[str]
     shlokas: Optional[List[dict]]
     segments: Optional[List[dict]]
@@ -18,4 +20,6 @@ class VerbaState(TypedDict):
     video_title: Optional[str]
     transcript_segments: Optional[List[dict]]
     caption_text: Optional[str]
-    harmonic_regions: Optional[List[dict]]
+    validation_passed: Optional[bool]
+    validation_errors: Optional[List[dict]]
+    needs_manual_review: Optional[bool]
