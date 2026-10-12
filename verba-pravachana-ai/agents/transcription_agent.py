@@ -263,24 +263,33 @@ def transcription_agent(state: VerbaState) -> VerbaState:
     path = state["audio_path"]
     print(f"[transcription] chunk {chunk_index} — {path}")
 
-    # Try Sarvam AI first
+    # Providers in preference order (ASR_PROVIDER picks the first); each falls
+    # through to the next on failure or an empty result, Whisper last
+    providers = []
+    if os.getenv("ASR_PROVIDER", "sarvam").lower() == "gemini" and os.getenv("GEMINI_API_KEY"):
+        from agents.gemini_asr import gemini_stt
+        providers.append(("Gemini", gemini_stt))
     if SARVAM_API_KEY:
+        providers.append(("Sarvam", _sarvam_stt))
+
+    for name, stt in providers:
         try:
-            text, lang, segments, gaps = _sarvam_stt(path)
+            text, lang, segments, gaps = stt(path)
             if text.strip() and text.replace(GAP_MARKER, "").strip():
                 state["transcription_gaps"] = gaps
                 state["transcript"] = text
                 state["detected_language"] = lang
                 state["transcript_segments"] = segments
+                state["asr_provider"] = name.lower()
                 state["current_agent"] = "transcription_done"
                 return state
-            else:
-                print("[transcription] Sarvam returned empty — falling back to Whisper")
+            print(f"[transcription] {name} returned empty — trying next provider")
         except Exception as e:
-            print(f"[transcription] Sarvam failed ({e}) — falling back to Whisper")
+            print(f"[transcription] {name} failed ({e}) — trying next provider")
 
     # Fallback: Groq Whisper
     text, lang, segments = _whisper_stt(path)
+    state["asr_provider"] = "whisper"
     print(f"[transcription] Whisper done ({len(text)} chars): {text[:300]}")
     state["transcript"] = text
     state["detected_language"] = lang

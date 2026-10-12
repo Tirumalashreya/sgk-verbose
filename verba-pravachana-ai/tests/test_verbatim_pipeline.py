@@ -392,3 +392,37 @@ def test_memory_rerun_replaces_segments_instead_of_duplicating(monkeypatch, tmp_
     col = Client("chroma_db").get_or_create_collection("notes_collection")
     docs = sorted(col.get()["documents"])
     assert docs == ["w2", "x2", "y2", "z"]   # chunk 1 replaced, chunk 2 untouched
+
+
+# ── Gemini ASR ────────────────────────────────────────────────────────────────
+
+def test_gemini_phrases_slice_transcript_by_byte_offsets():
+    from agents.gemini_asr import _phrases
+    text = "మొదటి ప్రశ్న ఏంటి? శ్రేయస్సు ఏది"
+    raw = text.encode("utf-8")
+    words, cursor = [], 0
+    timing = [(0.0, 0.4), (0.4, 0.9), (0.9, 1.2), (2.0, 2.6), (2.6, 2.9)]  # pause before శ్రేయస్సు
+    for w, (s, e) in zip(text.replace("?", "").split(), timing):
+        a = raw.index(w.encode(), cursor); b = a + len(w.encode()); cursor = b
+        words.append({"start_index": a, "end_index": b, "start_offset": f"{s}s", "end_offset": f"{e}s", "text": w})
+    ph = _phrases(text, words, offset=100.0)
+    assert [p["text"] for p in ph] == ["మొదటి ప్రశ్న ఏంటి", "శ్రేయస్సు ఏది"]
+    assert ph[1]["start"] == 102.0 and ph[0]["end"] == 101.2
+
+
+def test_gemini_failed_piece_is_covered_by_sarvam(monkeypatch):
+    from agents import gemini_asr as g, transcription_agent as ta
+    monkeypatch.setattr(ta, "_to_mp3_16k", lambda p: p)
+    monkeypatch.setattr(ta, "_split_audio", lambda p, max_sec: ["p0", "p1", "p2"])
+    def piece(path, use_cache=True):
+        if path == "p1":
+            raise RuntimeError("503 UNAVAILABLE high demand")
+        return f"gemini-{path}"
+    monkeypatch.setattr(g, "_llm_piece", piece)
+    monkeypatch.setattr(g, "_sarvam_fallback", lambda p: f"sarvam-{p}")
+    text, _, _, gaps = g.gemini_stt("x.mp3", "llm")
+    assert text == "gemini-p0 sarvam-p1 gemini-p2" and gaps == 0
+
+    monkeypatch.setattr(g, "_sarvam_fallback", lambda p: "")
+    text, _, _, gaps = g.gemini_stt("x.mp3", "llm")
+    assert text == "gemini-p0 [?] gemini-p2" and gaps == 1
