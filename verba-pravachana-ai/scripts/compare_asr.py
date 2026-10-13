@@ -87,6 +87,13 @@ def run_providers(clip: str, out_dir: str) -> dict:
             continue
         with open(path, "w", encoding="utf-8") as f:
             f.write(texts[name])
+
+    # Transcripts produced elsewhere (e.g. scripts/indicconformer_transcribe.py)
+    known = {re.sub(r"\W+", "_", n).strip("_") + ".txt" for n in runs}
+    out_dir = os.path.join(out_dir, "asr_outputs")
+    for fname in sorted(os.listdir(out_dir)):
+        if fname.endswith(".txt") and fname not in known:
+            texts[fname[:-4].replace("_", " ")] = open(os.path.join(out_dir, fname), encoding="utf-8").read()
     return texts
 
 
