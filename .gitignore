@@ -47,3 +47,8 @@ yarn-error.*
 /ios
 /android
 data/verse_library/
+
+# Google Cloud service-account credentials
+gcp-credentials*.json
+gen-lang-client-*.json
+*service-account*.json

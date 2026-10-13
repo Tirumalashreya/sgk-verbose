@@ -312,9 +312,13 @@ def transcription_agent(state: VerbaState) -> VerbaState:
     # Providers in preference order (ASR_PROVIDER picks the first); each falls
     # through to the next on failure or an empty result, Whisper last
     providers = []
-    if os.getenv("ASR_PROVIDER", "sarvam").lower() == "gemini" and os.getenv("GEMINI_API_KEY"):
+    choice = os.getenv("ASR_PROVIDER", "sarvam").lower()
+    if choice == "gemini" and os.getenv("GEMINI_API_KEY"):
         from agents.gemini_asr import gemini_stt
         providers.append(("Gemini", gemini_stt))
+    if choice == "google" and os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+        from agents.google_asr import chirp_stt
+        providers.append(("Google", chirp_stt))
     if SARVAM_API_KEY:
         providers.append(("Sarvam", _sarvam_stt))
 

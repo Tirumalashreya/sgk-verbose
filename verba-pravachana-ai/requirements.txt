@@ -127,3 +127,4 @@ zstandard==0.25.0
 indic-transliteration
 sarvamai
 rapidfuzz
+google-cloud-speech

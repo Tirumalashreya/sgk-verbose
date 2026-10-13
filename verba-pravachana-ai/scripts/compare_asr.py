@@ -65,7 +65,9 @@ def diff_html(ref: list[str], hyp: list[str]) -> str:
 def run_providers(clip: str, out_dir: str, only: list[str] | None = None) -> dict:
     from agents.transcription_agent import _sarvam_stt, sarvam_settings
     from agents.gemini_asr import gemini_stt
+    from agents.google_asr import chirp_stt
     runs = {
+        "Google Chirp 3": lambda: chirp_stt(clip)[0],
         "Sarvam saaras:v3": lambda: _sarvam_stt(clip, sarvam_settings("saaras:v3", "transcribe", False))[0],
         "Sarvam v4 transcribe + keyterms": lambda: _sarvam_stt(clip, sarvam_settings("saaras:v4", "transcribe", True))[0],
         "Sarvam v4 verbatim + keyterms": lambda: _sarvam_stt(clip, sarvam_settings("saaras:v4", "verbatim", True))[0],
