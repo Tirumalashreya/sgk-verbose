@@ -46,3 +46,4 @@ yarn-error.*
 *.tsbuildinfo
 /ios
 /android
+data/verse_library/

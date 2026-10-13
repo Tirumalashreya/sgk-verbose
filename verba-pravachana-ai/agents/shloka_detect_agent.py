@@ -4,6 +4,7 @@ from agents.groq_llm_client import call as _groq_call, parallel_map, STRONG_MODE
 from agents.text_chunker import chunk_text
 from agents.verbatim import (normalize_ws, clean_verse, find_all, expand_to_words, verse_script,
                              has_devanagari, devanagari_to_telugu, telugu_to_devanagari)
+from agents import verse_library
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -106,8 +107,39 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
             "occurrences": [list(sp) for sp in spans],
         })
 
+    shlokas = _verify_with_library(norm_transcript, shlokas)
     print(f"[shloka_detect] done — {len(all_raw)} detected, {len(shlokas)} verified")
     return {"shlokas": shlokas}
+
+
+def _verify_with_library(norm_transcript: str, shlokas: list) -> list:
+    """Attach the verified Tamil original to pasurams found in the Divya
+    Prabandham, and add pasurams the LLM missed. The spoken text itself is
+    never changed — the source text only fills the second line."""
+    for s in shlokas:
+        if s["language"] == "Sanskrit" and s.get("script_certain"):
+            continue
+        m = verse_library.match_verse(s["text"])
+        if m:
+            print(f"  shloka matched to Divya Prabandham #{m['number']} (score {m['score']}): {s['text'][:40]!r}")
+            s.update({"language": "Tamil", "type": "Paasuram", "script_certain": True,
+                      "original": verse_library.original_line(m), "reference": verse_library.reference(m)})
+
+    taken = [(a, b) for s in shlokas for a, b in s["occurrences"]]
+    for m in verse_library.find_pasurams(norm_transcript):
+        if any(a < m["end"] and m["start"] < b for a, b in taken):
+            continue
+        text = norm_transcript[m["start"]:m["end"]]
+        spans = find_all(norm_transcript, text)
+        print(f"  pasuram found by library (missed by LLM): #{m['number']} score {m['score']}: {text[:40]!r}")
+        shlokas.append({
+            "language": "Tamil", "llm_language": None, "script_certain": True, "type": "Paasuram",
+            "text": text, "original": verse_library.original_line(m), "reference": verse_library.reference(m),
+            "confidence": m["score"] / 100, "verified": True, "found_by": "library",
+            "start_index": spans[0][0], "end_index": spans[0][1], "occurrences": [list(sp) for sp in spans],
+        })
+        taken.extend(spans)
+    return sorted(shlokas, key=lambda s: s["start_index"])
 
 
 def _build_prompt(transcript: str) -> str:

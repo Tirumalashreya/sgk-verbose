@@ -444,8 +444,66 @@ def test_verse_script(text, llm, expected):
     assert verse_script(text, llm) == expected
 
 
-def test_tamil_verse_labelled_sanskrit_gets_no_devanagari(monkeypatch):
+def test_tamil_verse_labelled_sanskrit_gets_no_devanagari(monkeypatch, tmp_path):
+    from agents import verse_library as vl
+    monkeypatch.setattr(vl, "LIBRARY", str(tmp_path / "missing.json"))  # without the verse library
+    vl._index.cache_clear()
     transcript = f"{FILLER} విసిత్తిరత్తేర్వలైవ అంటారు {FILLER}"
     found = _detect(monkeypatch, transcript, [{"language": "Sanskrit", "text": "విసిత్తిరత్తేర్వలైవ", "confidence": 0.9}])
     assert found[0]["language"] == "Tamil" and found[0]["type"] == "Paasuram"
     assert found[0]["original"] == "" and found[0]["llm_language"] == "Sanskrit"
+
+
+# ── Divya Prabandham library ──────────────────────────────────────────────────
+
+@pytest.fixture
+def tiny_library(monkeypatch, tmp_path):
+    from agents import verse_library as vl
+    lib = {"verses": [
+        {"number": 1073, "lines": ["அந்தகன் சிறுவன் அரசர்-தம் அரசற்கு", "இந்திரன் சிறுவன் தேர் முன் நின்றானை"]},
+        {"number": 3523, "lines": ["சித்திரத் தேர் வலவா திருச் சக்கரத்தாய் அருளாய்"]},
+        {"number": 474, "lines": ["மார்கழித் திங்கள் மதி நிறைந்த நன்னாளால்"]},
+    ]}
+    path = tmp_path / "dp.json"
+    path.write_text(json.dumps(lib, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(vl, "LIBRARY", str(path))
+    vl._index.cache_clear()
+    yield vl
+    vl._index.cache_clear()
+
+
+def test_library_finds_pasuram_heard_in_telugu_script(tiny_library):
+    transcript = f"{FILLER} భగవంతుడు ఎంత గొప్పవాడండి? ఇందిరన్ సిరువంతేర్మున్ నింద్రాని తిరువల్లికే. {FILLER}"
+    matches = tiny_library.find_pasurams(normalize_ws(transcript))
+    assert [m["number"] for m in matches] == [1073]
+    heard = normalize_ws(transcript)[matches[0]["start"]:matches[0]["end"]]
+    assert "ఇందిరన్" in heard and "సిరువంతేర్మున్" in heard
+
+
+def test_library_ignores_plain_telugu(tiny_library):
+    assert tiny_library.find_pasurams(normalize_ws(" ".join([FILLER] * 30))) == []
+
+
+def test_library_verifies_short_llm_verse(tiny_library):
+    m = tiny_library.match_verse("విసిత్తిరత్తేర్వలైవ")
+    assert m and m["number"] == 3523
+    assert "(" not in tiny_library.original_line(m) and "3523" in tiny_library.original_line(m)
+
+
+def test_shloka_step_adds_missed_pasuram_and_keeps_notes_verbatim(monkeypatch, tiny_library):
+    transcript = f"{FILLER} ఇందిరన్ సిరువంతేర్మున్ నింద్రాని తిరువల్లికే {FILLER} విసిత్తిరత్తేర్వలైవ అంటారు {FILLER}"
+    found = _detect(monkeypatch, transcript, [{"language": "Sanskrit", "text": "విసిత్తిరత్తేర్వలైవ", "confidence": 0.9}])
+    refs = {s["reference"]["number"]: s.get("found_by", "llm") for s in found if s.get("reference")}
+    assert refs == {1073: "library", 3523: "llm"}
+    assert all(s["language"] == "Tamil" for s in found)
+    notes = format_notes(transcript, found)
+    assert "சித்திரத் தேர் வலவா" in notes
+    assert validate(transcript, notes, found) == []
+
+
+def test_without_library_nothing_changes(monkeypatch, tmp_path):
+    from agents import verse_library as vl
+    monkeypatch.setattr(vl, "LIBRARY", str(tmp_path / "missing.json"))
+    vl._index.cache_clear()
+    assert vl.find_pasurams("ఇందిరన్ సిరువంతేర్మున్ నింద్రాని") == [] and vl.match_verse("విసిత్తిరత్తేర్వలైవ") is None
+    vl._index.cache_clear()
