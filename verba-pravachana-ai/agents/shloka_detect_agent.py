@@ -2,7 +2,7 @@ from graph.state import VerbaState
 import json, re
 from agents.groq_llm_client import call as _groq_call, parallel_map, STRONG_MODEL
 from agents.text_chunker import chunk_text
-from agents.verbatim import (normalize_ws, clean_verse, find_all, expand_to_words,
+from agents.verbatim import (normalize_ws, clean_verse, find_all, expand_to_words, verse_script,
                              has_devanagari, devanagari_to_telugu, telugu_to_devanagari)
 from dotenv import load_dotenv
 load_dotenv()
@@ -78,19 +78,25 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
         a, b = expand_to_words(norm_transcript, *spans[0])
         text = norm_transcript[a:b]
         spans = find_all(norm_transcript, text)
-        is_sanskrit = "sanskrit" in lang.lower()
+        # Never show a script we are not sure of: a missing second line is
+        # better than a Tamil pasuram rendered in Devanagari
+        script = verse_script(text, lang)
         if has_devanagari(text):
             # Sarvam already wrote this verse in Devanagari — show Telugu script as the second line
             original = devanagari_to_telugu(text)
-        elif is_sanskrit:
+        elif script == "Sanskrit":
             # Telugu-script Sanskrit → Devanagari (same sounds, different script)
             original = telugu_to_devanagari(text)
         else:
-            # Tamil: Telugu→Tamil script is lossy, so no original is shown
+            # Tamil: Telugu→Tamil script is lossy; unknown: don't guess
             original = ""
+        if script != "unknown" and script.lower() not in lang.lower():
+            print(f"  shloka relabelled {lang!r} → {script!r} from its sounds: {text[:40]!r}")
         shlokas.append({
-            "language": lang,
-            "type": s.get("type") or ("Shloka" if is_sanskrit else "Paasuram"),
+            "language": script if script != "unknown" else lang,
+            "llm_language": lang,
+            "script_certain": script != "unknown",
+            "type": "Shloka" if script == "Sanskrit" else "Paasuram" if script == "Tamil" else (s.get("type") or "Shloka"),
             "text": text,
             "original": original,
             "confidence": conf,
@@ -117,6 +123,13 @@ HOW TO IDENTIFY WHERE A SHLOKA STARTS:
 - Speaker shifts from Telugu to Sanskrit/Tamil words mid-sentence
 - Compound words with Sanskrit endings: -చ, -స్య, -ణ, -స్చ, -ణాం, -మ్
 - Tamil pasuram words: పోల్, మేని, పవళ, కమల, అచ్చుత, అమరర్, కొళుందే, తిరు-
+
+TELLING TAMIL FROM SANSKRIT (both are written in Telugu script here — label carefully):
+- Tamil: words ending in a consonant (-న్, -ల్, -ర్, -ళ్, -ణ్), ళ / ఱ, endings like -ఆనై, -ఏనే, -ఆరే,
+  doubled consonants (త్త, ట్ట, క్క, ప్ప), Divya Desam / Alwar names (తిరువల్లిక్కేణి, తిరువరంగం, ఎంబెరుమాన్, అడియేన్)
+- Sanskrit: visarga ః, aspirated letters (ఖ ఘ థ ధ భ), శ / ష, endings like -స్య, -తే, -ాయ
+- Example Tamil pasuram line (Tiruppavai): "మార్గళి త్తింగళ్ మది నిఱైంద నన్నాళాల్" → language "Tamil"
+- A Tamil pasuram is NEVER "Sanskrit", even if it contains Sanskrit-derived words
 
 HOW TO IDENTIFY WHERE A SHLOKA ENDS (CRITICAL):
 - The shloka ends at the last Sanskrit/Tamil word before Telugu explanation resumes

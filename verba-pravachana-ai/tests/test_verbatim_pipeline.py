@@ -426,3 +426,26 @@ def test_gemini_failed_piece_is_covered_by_sarvam(monkeypatch):
     monkeypatch.setattr(g, "_sarvam_fallback", lambda p: "")
     text, _, _, gaps = g.gemini_stt("x.mp3", "llm")
     assert text == "gemini-p0 [?] gemini-p2" and gaps == 1
+
+
+# ── verse script (Tamil vs Sanskrit) ──────────────────────────────────────────
+
+@pytest.mark.parametrize("text, llm, expected", [
+    ("నవ్యతీతాః పితామహః", "Sanskrit", "Sanskrit"),          # visarga
+    ("నచ పునరావర్తతే", "Sanskrit", "Sanskrit"),             # grammatical ending only
+    ("తం తమేవైతి కౌంతేయ", "Sanskrit", "Sanskrit"),
+    ("ॐ हरये नमः।", "Sanskrit", "Sanskrit"),               # already Devanagari
+    ("విసిత్తిరత్తేర్వలైవ", "Sanskrit", "Tamil"),           # LLM mislabel seen in a real run
+    ("ఇందిరన్ సిరువంతేర్మున్ నింద్రాని తిరువల్లికే", "Tamil", "Tamil"),
+    ("మార్గళి త్తింగళ్ మది నిఱైంద నన్నాళాల్", "Sanskrit", "Tamil"),
+])
+def test_verse_script(text, llm, expected):
+    from agents.verbatim import verse_script
+    assert verse_script(text, llm) == expected
+
+
+def test_tamil_verse_labelled_sanskrit_gets_no_devanagari(monkeypatch):
+    transcript = f"{FILLER} విసిత్తిరత్తేర్వలైవ అంటారు {FILLER}"
+    found = _detect(monkeypatch, transcript, [{"language": "Sanskrit", "text": "విసిత్తిరత్తేర్వలైవ", "confidence": 0.9}])
+    assert found[0]["language"] == "Tamil" and found[0]["type"] == "Paasuram"
+    assert found[0]["original"] == "" and found[0]["llm_language"] == "Sanskrit"

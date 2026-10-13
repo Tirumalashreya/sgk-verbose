@@ -50,6 +50,32 @@ def has_devanagari(text: str) -> bool:
     return bool(_DEVANAGARI.search(text or ""))
 
 
+# Sound evidence for which language a Telugu-script verse is in. Tamil has no
+# visarga, aspirated stops, శ/ష or vocalic ṛ; Tamil verses show its final
+# consonants (-న్, -ల్, -ర్, -ళ్), ళ/ఱ and typical endings.
+_SKT_STRONG = re.compile(r"ః|[ఖఘఛఝఠఢథధఫభశషఋౠ]|ృ|క్ష|జ్ఞ")
+_SKT_WEAK = re.compile(r"(?:స్య|తే|ేయ|ాయ|ామి|తి|ాః)(?=\s|$|[.,।?!])|స్యే|్[కత]\s")
+_TAMIL_CUES = re.compile(r"ళ|ఴ|ఱ|(?:న్|ల్|ర్|ళ్|ణ్)(?=\s|$|[.,?!])|ఆనై|ానై|ఏనే|ేనే|ఎంబెరుమాన్|అడియేన్|తిరు|ై(?=వ|ర|ల)")
+
+
+def verse_script(text: str, llm_language: str = "") -> str:
+    """'Sanskrit', 'Tamil' or 'unknown' — only 'Sanskrit' may be shown in Devanagari.
+    The LLM's label alone is not trusted: it has called Tamil pasurams Sanskrit."""
+    if has_devanagari(text):
+        return "Sanskrit"
+    strong, weak, tamil = (len(r.findall(text)) for r in (_SKT_STRONG, _SKT_WEAK, _TAMIL_CUES))
+    says_sanskrit = "sanskrit" in (llm_language or "").lower()
+    if says_sanskrit and tamil == 0 and strong + weak >= 1:
+        return "Sanskrit"
+    if strong >= 2 and strong > tamil:
+        return "Sanskrit"
+    if tamil > 0 and strong == 0:
+        return "Tamil"
+    if "tamil" in (llm_language or "").lower() and strong == 0:
+        return "Tamil"
+    return "unknown"
+
+
 def devanagari_to_telugu(text: str) -> str:
     try:
         from indic_transliteration import sanscript
