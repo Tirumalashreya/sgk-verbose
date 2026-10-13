@@ -63,10 +63,13 @@ def diff_html(ref: list[str], hyp: list[str]) -> str:
 
 
 def run_providers(clip: str, out_dir: str) -> dict:
-    from agents.transcription_agent import _sarvam_stt
+    from agents.transcription_agent import _sarvam_stt, sarvam_settings
     from agents.gemini_asr import gemini_stt
     runs = {
-        "Sarvam saaras:v3": lambda: _sarvam_stt(clip)[0],
+        "Sarvam saaras:v3": lambda: _sarvam_stt(clip, sarvam_settings("saaras:v3", "transcribe", False))[0],
+        "Sarvam v4 transcribe + keyterms": lambda: _sarvam_stt(clip, sarvam_settings("saaras:v4", "transcribe", True))[0],
+        "Sarvam v4 verbatim + keyterms": lambda: _sarvam_stt(clip, sarvam_settings("saaras:v4", "verbatim", True))[0],
+        "Sarvam v4 verbatim": lambda: _sarvam_stt(clip, sarvam_settings("saaras:v4", "verbatim", False))[0],
         "Gemini · timestamps (run 1)": lambda: gemini_stt(clip, "timestamps")[0],
         "Gemini · timestamps (run 2)": lambda: gemini_stt(clip, "timestamps", use_cache=False)[0],
         "Gemini · custom vocabulary": lambda: gemini_stt(clip, "vocabulary")[0],

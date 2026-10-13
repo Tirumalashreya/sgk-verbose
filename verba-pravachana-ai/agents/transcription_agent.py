@@ -67,18 +67,47 @@ _SARVAM_FATAL = ("402", "insufficient_quota", "No credits", "401", "403")
 GAP_MARKER = "[?]"  # stands in for audio that could not be transcribed
 
 
-def _sarvam_cache_path(chunk_path: str) -> str:
-    """Cache key is the audio content, so re-uploads and restarts never pay twice."""
+def _sarvam_keyterms() -> list[str]:
+    """Up to 50 Vaishnava terms (API limit, 64 chars each) to bias saaras:v4."""
+    import json
+    path = os.path.join(os.path.dirname(__file__), "..", "data", "vaishnava_terms.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[transcription] could not load keyterms: {e}")
+        return []
+    terms = [t for t in data.get("telugu", []) + data.get("sanskrit", []) if len(t) <= 64]
+    return list(dict.fromkeys(terms))[:50]
+
+
+def sarvam_settings(model: str | None = None, mode: str | None = None, keyterms: bool | None = None) -> dict:
+    """Model/mode/keyterms from arguments, else SARVAM_MODEL / SARVAM_MODE / SARVAM_KEYTERMS."""
+    model = model or os.getenv("SARVAM_MODEL", "saaras:v3")
+    mode = mode or os.getenv("SARVAM_MODE", "transcribe")
+    if keyterms is None:
+        keyterms = os.getenv("SARVAM_KEYTERMS", "0") == "1"
+    # keyterms are only supported by saaras:v4
+    terms = _sarvam_keyterms() if keyterms and model == "saaras:v4" else []
+    return {"model": model, "mode": mode, "keyterms": terms}
+
+
+def _sarvam_cache_path(chunk_path: str, settings: dict) -> str:
+    """Cache key is the audio content plus settings, so re-uploads and restarts never pay twice."""
     import hashlib
     with open(chunk_path, "rb") as f:
         digest = hashlib.sha1(f.read()).hexdigest()
-    return os.path.join(_SARVAM_CACHE_DIR, f"saaras-v3-{digest}.txt")
+    if settings["model"] == "saaras:v3" and settings["mode"] == "transcribe" and not settings["keyterms"]:
+        return os.path.join(_SARVAM_CACHE_DIR, f"saaras-v3-{digest}.txt")  # original key format
+    kt = hashlib.sha1("|".join(settings["keyterms"]).encode()).hexdigest()[:8] if settings["keyterms"] else "nokt"
+    name = f"{settings['model'].replace(':', '-')}-{settings['mode']}-{kt}-{digest}.txt"
+    return os.path.join(_SARVAM_CACHE_DIR, name)
 
 
 def _sarvam_transcribe_chunk(args, attempts: int = 3):
     import time as _time
-    i, chunk_path = args
-    cache = _sarvam_cache_path(chunk_path)
+    i, chunk_path, settings = args if len(args) == 3 else (*args, sarvam_settings())
+    cache = _sarvam_cache_path(chunk_path, settings)
     if os.path.exists(cache):
         with open(cache, encoding="utf-8") as f:
             return i, f.read()
@@ -86,10 +115,12 @@ def _sarvam_transcribe_chunk(args, attempts: int = 3):
     for attempt in range(attempts):
         try:
             with open(chunk_path, "rb") as f:
+                extra = {"keyterms": settings["keyterms"]} if settings["keyterms"] else {}
                 response = sarvam_client.speech_to_text.transcribe(
                     file=f,
-                    model="saaras:v3",
-                    mode="transcribe",
+                    model=settings["model"],
+                    mode=settings["mode"],
+                    **extra,
                 )
             break
         except Exception as e:
@@ -106,16 +137,18 @@ def _sarvam_transcribe_chunk(args, attempts: int = 3):
     return i, text
 
 
-def _sarvam_stt(path: str) -> tuple:
-    """Transcribe using Sarvam AI saaras:v3 — parallel sub-chunk calls.
+def _sarvam_stt(path: str, settings: dict | None = None) -> tuple:
+    """Transcribe using Sarvam AI (saaras:v3 by default) — parallel sub-chunk calls.
     Returns (text, language, segments, gap_count)."""
-    print("[transcription] Sarvam AI (saaras:v3)...")
+    settings = settings or sarvam_settings()
+    print(f"[transcription] Sarvam AI ({settings['model']}, {settings['mode']}, "
+          f"{len(settings['keyterms'])} keyterms)...")
     mp3_path = _to_mp3_16k(path)
     chunks = _split_audio(mp3_path, max_sec=28)
 
     # Probe with first chunk — bail out immediately on quota/auth errors
     try:
-        _sarvam_transcribe_chunk((0, chunks[0]))
+        _sarvam_transcribe_chunk((0, chunks[0], settings))
     except Exception as e:
         msg = str(e)
         if any(code in msg for code in _SARVAM_FATAL):
@@ -127,7 +160,7 @@ def _sarvam_stt(path: str) -> tuple:
     # silently return a partial transcript.)
     results, failed = {}, []
     with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as ex:
-        futures = {ex.submit(_sarvam_transcribe_chunk, (i, c)): i for i, c in enumerate(chunks)}
+        futures = {ex.submit(_sarvam_transcribe_chunk, (i, c, settings)): i for i, c in enumerate(chunks)}
         for fut in as_completed(futures):
             i = futures[fut]
             try:
