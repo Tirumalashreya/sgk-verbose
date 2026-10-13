@@ -19,10 +19,21 @@ SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 sarvam_client = SarvamAI(api_subscription_key=SARVAM_API_KEY) if SARVAM_API_KEY else None
 
 
+# Converted audio and its pieces go here, never next to the user's own file
+WORK_DIR = os.path.join("audio_input", ".work")
+
+
+def _work_path(src: str, suffix: str) -> str:
+    import hashlib
+    os.makedirs(WORK_DIR, exist_ok=True)
+    tag = hashlib.sha1(os.path.abspath(src).encode()).hexdigest()[:10]
+    return os.path.join(WORK_DIR, f"{tag}{suffix}")
+
+
 def _to_mp3_16k(src: str) -> str:
     """Convert any audio file to MP3 16kHz mono using ffmpeg. Returns path to converted file."""
-    import subprocess, tempfile
-    dst = src.rsplit(".", 1)[0] + "_16k.mp3"
+    import subprocess
+    dst = _work_path(src, "_16k.mp3")
     subprocess.run(
         ["ffmpeg", "-y", "-i", src, "-ar", "16000", "-ac", "1", "-q:a", "4", dst],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
@@ -120,6 +131,8 @@ def _sarvam_transcribe_chunk(args, attempts: int = 3):
                     file=f,
                     model=settings["model"],
                     mode=settings["mode"],
+                    # without a timeout one hung request blocks the whole recording
+                    request_options={"timeout_in_seconds": 60, "max_retries": 0},
                     **extra,
                 )
             break
@@ -225,7 +238,7 @@ def _split_audio(path: str, max_sec: int = 300) -> list:
     if duration <= max_sec:
         return [path]
 
-    base = path.rsplit(".", 1)[0]
+    base = _work_path(path, f"_{max_sec}s")
     ext  = path.rsplit(".", 1)[1]
     chunks, start, i = [], 0, 0
     while start < duration:

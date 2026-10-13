@@ -38,7 +38,8 @@ def _get_client():
         key = os.getenv("GEMINI_API_KEY", "")
         if not key:
             raise RuntimeError("GEMINI_API_KEY is not set")
-        _client = genai.Client(api_key=key)
+        # timeout in ms — a hung request would otherwise block the recording
+        _client = genai.Client(api_key=key, http_options={"timeout": 180_000})
     return _client
 
 

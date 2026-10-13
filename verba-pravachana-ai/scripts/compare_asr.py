@@ -62,7 +62,7 @@ def diff_html(ref: list[str], hyp: list[str]) -> str:
     return " ".join(out)
 
 
-def run_providers(clip: str, out_dir: str) -> dict:
+def run_providers(clip: str, out_dir: str, only: list[str] | None = None) -> dict:
     from agents.transcription_agent import _sarvam_stt, sarvam_settings
     from agents.gemini_asr import gemini_stt
     runs = {
@@ -76,6 +76,8 @@ def run_providers(clip: str, out_dir: str) -> dict:
         "Gemini Flash · prompt (run 1)": lambda: gemini_stt(clip, "llm")[0],
         "Gemini Flash · prompt (run 2)": lambda: gemini_stt(clip, "llm", use_cache=False)[0],
     }
+    if only:
+        runs = {n: fn for n, fn in runs.items() if any(o.lower() in n.lower() for o in only)}
     texts = {}
     os.makedirs(os.path.join(out_dir, "asr_outputs"), exist_ok=True)
     for name, fn in runs.items():
@@ -142,10 +144,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("clip")
     ap.add_argument("--notebooklm")
+    ap.add_argument("--providers", help="comma-separated name filters, e.g. 'saaras:v3,v4 verbatim + keyterms,Flash · prompt (run 1)'")
     ap.add_argument("--out", default=os.path.dirname(os.path.abspath(sys.argv[1])) if len(sys.argv) > 1 else ".")
     args = ap.parse_args()
     clip = os.path.abspath(args.clip)
-    texts = run_providers(clip, args.out)
+    texts = run_providers(clip, args.out, args.providers.split(",") if args.providers else None)
     reference = None
     if args.notebooklm:
         reference = "NotebookLM"
