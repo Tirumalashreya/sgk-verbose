@@ -527,3 +527,20 @@ def test_everyday_tamil_words_are_not_pasuram_evidence():
     assert _TAMIL_CUES.search(plain)                                   # the raw cue fires...
     assert not _TAMIL_CUES.search(_EVERYDAY_TAMIL_WORDS.sub(" ", plain))  # ...but not after removing loanwords
     assert _TAMIL_CUES.search(_EVERYDAY_TAMIL_WORDS.sub(" ", "ఇందిరన్ సిరువంతేర్మున్ నింద్రాని"))
+
+
+def test_groq_retries_a_cut_off_reply(monkeypatch):
+    from agents import groq_llm_client as g
+    for env in g._KEY_ENVS:
+        monkeypatch.setenv(env, "")
+    monkeypatch.setenv("GROQ_API_KEY_STRUCTURER", "k1")
+    monkeypatch.setattr(g, "_cooldown_until", {})
+    replies = iter([g._BadReply("cut off"), "good"])
+    def fake(*a):
+        r = next(replies)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    monkeypatch.setattr(g, "_request", fake)
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    assert g.call("p", "GROQ_API_KEY_STRUCTURER") == "good"

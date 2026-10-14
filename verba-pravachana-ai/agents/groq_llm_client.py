@@ -29,6 +29,10 @@ def _distinct_keys(first_env: str | None = None) -> list[str]:
     return keys
 
 
+class _BadReply(Exception):
+    """Reply arrived but is unusable (cut off or empty): retry, but don't cool the key down."""
+
+
 def _keys_for(api_key_env: str) -> list[str]:
     keys = _distinct_keys(api_key_env)
     if len(keys) > 1:
@@ -64,8 +68,10 @@ def _request(api_key: str, prompt: str, model: str, temperature: float) -> str:
     choice = response.choices[0]
     content = (choice.message.content or "").strip()
     if choice.finish_reason == "length" or not content:
-        print(f"[groq_llm] WARNING {model} reply {'cut off' if choice.finish_reason == 'length' else 'empty'} "
-              f"({response.usage.completion_tokens} tokens) — output may be incomplete")
+        # Occasionally the model rambles until the cap; a cut-off JSON reply is
+        # unusable, so treat it as a failed attempt and ask again
+        raise _BadReply(f"{model} reply {'cut off' if choice.finish_reason == 'length' else 'empty'} "
+                        f"({response.usage.completion_tokens} tokens)")
     return content
 
 
@@ -81,6 +87,9 @@ def call(prompt: str, api_key_env: str, model: str = FAST_MODEL, temperature: fl
                 continue
             try:
                 return _request(key, prompt, model, temperature)
+            except _BadReply as e:
+                print(f"[groq_llm] {e} — retrying")
+                continue
             except Exception as e:
                 msg = str(e)
                 # Rate-limited: park this key for as long as Groq asks and move
