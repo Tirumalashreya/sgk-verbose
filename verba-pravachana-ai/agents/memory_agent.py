@@ -2,6 +2,11 @@ from graph.state import VerbaState
 import uuid
 import chromadb
 def memory_agent(state: VerbaState) -> VerbaState:
+    if state.get("live_piece"):
+        # One minute of a recording still in progress: the whole recording is
+        # stored once when it stops, so don't index this preview piece
+        state["current_agent"] = "memory_done"
+        return state
     segments = state.get("segments") or []
     client = chromadb.PersistentClient(path="chroma_db")
     collection = client.get_or_create_collection(name="notes_collection")

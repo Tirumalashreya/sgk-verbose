@@ -581,3 +581,84 @@ def test_dual_alignment_does_not_pair_words_shifted_by_a_join():
     disputes = [op for op in align(a, [0] * len(a), b) if "keep" not in op]
     assert len(disputes) == 1                       # one phrase-level dispute, not 4 nonsense pairs
     assert disputes[0]["a"][0] == "ఎవనిని" and disputes[0]["b"][-1] == "ఎందుచేత?"
+
+
+# ── one recording → one set of notes ──────────────────────────────────────────
+
+@pytest.fixture
+def api_env(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    import api
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(api, "sessions_store", [])
+    monkeypatch.setattr(api, "_active_upload_hashes", set())
+    monkeypatch.setattr(api, "_live_recording_session", None)
+    monkeypatch.setattr(api, "_save_chunk_result", lambda *a: None)
+    text_runs = []
+
+    class SyncThread:                      # run "background" finalize immediately
+        def __init__(self, target, args=(), daemon=None): self.t, self.a = target, args
+        def start(self): self.t(*self.a)
+    monkeypatch.setattr(api.threading, "Thread", SyncThread)
+
+    def fake_graph(state, chunk_index):
+        minute = open(state["audio_path"], "rb").read().decode()
+        return {"transcript": minute, "notes": minute, "shlokas": [], "segments": []}
+    monkeypatch.setattr(api, "_run_graph", fake_graph)
+
+    def fake_text_steps(transcript, chunk_index, source):
+        text_runs.append(transcript)
+        return {"notes": transcript, "summary": "one summary", "shlokas": [], "segments": [{"text": "s"}]}
+    monkeypatch.setattr(api, "_run_text_steps", fake_text_steps)
+    return api, TestClient(api.app), text_runs
+
+
+def test_mic_recording_becomes_one_session_with_notes_built_once(api_env):
+    api, client, text_runs = api_env
+    client.post("/start-live")
+    for minute in ("మొదటి నిమిషం", "రెండవ నిమిషం", "మూడవ నిమిషం"):
+        client.post("/upload-audio", files={"file": ("chunk.webm", minute.encode())}, data={"live": "1"})
+    assert len(api.sessions_store) == 1                     # preview: still one session
+    client.post("/stop-session")
+    assert len(api.sessions_store) == 1
+    s = api.sessions_store[0]
+    assert s["transcript"] == "మొదటి నిమిషం\nరెండవ నిమిషం\nమూడవ నిమిషం"
+    assert text_runs == [s["transcript"]]                    # text steps ran once, over everything
+    assert s["summary"] == "one summary" and s["pieces_recorded"] == 3
+    assert "pieces" not in s and "pending" not in s
+
+
+def test_recording_finalizes_only_after_its_last_piece(api_env, monkeypatch):
+    api, client, text_runs = api_env
+    client.post("/start-live")
+    session = api._live_recording_session
+    session["pending"] = 1                                   # a minute still being processed
+    client.post("/stop-session")
+    assert text_runs == []                                   # not yet
+    session["pieces"].append({"transcript": "చివరి నిమిషం"}); session["transcript"] = "చివరి నిమిషం"
+    with api._live_lock:
+        session["pending"] -= 1
+    api._finalize_live_session(session)
+    assert text_runs == ["చివరి నిమిషం"]
+
+
+def test_recording_with_no_speech_saves_nothing(api_env):
+    api, client, text_runs = api_env
+    client.post("/start-live")
+    client.post("/stop-session")
+    assert api.sessions_store == [] and text_runs == []
+
+
+def test_uploaded_file_is_one_session(api_env):
+    api, client, _ = api_env
+    client.post("/upload-audio", files={"file": ("talk.mp3", "మొత్తం ప్రవచనం".encode())})
+    assert len(api.sessions_store) == 1 and api.sessions_store[0]["title"] == "talk"
+
+
+def test_empty_sessions_are_dropped_on_load(monkeypatch, tmp_path):
+    import api
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sessions.json").write_text(json.dumps([
+        {"title": "Live Recording", "transcript": "", "notes": ""},
+        {"title": "real", "transcript": "ప్రవచనం", "notes": "ప్రవచనం"}]), encoding="utf-8")
+    assert [s["title"] for s in api._load_sessions()] == ["real"]

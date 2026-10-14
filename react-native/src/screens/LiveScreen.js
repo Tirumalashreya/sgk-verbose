@@ -358,9 +358,11 @@ export default function LiveScreen({ go, t, sessionUrl, pendingUpload, clearPend
 
   const stopPolling = () => clearInterval(pollRef.current);
 
+  // One minute of the mic recording in progress (live=1 keeps it in the same recording)
   const sendAudioChunk = async (blob, filename = 'chunk.webm') => {
     const form = new FormData();
     form.append('file', blob, filename);
+    form.append('live', '1');
     try {
       await fetch(`${API_BASE}/upload-audio`, { method: 'POST', body: form });
     } catch (e) {
@@ -473,10 +475,11 @@ export default function LiveScreen({ go, t, sessionUrl, pendingUpload, clearPend
         const rec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         const parts = [];
         rec.ondataavailable = (e) => { if (e.data.size > 0) parts.push(e.data); };
-        rec.onstop = () => {
+        rec.onstop = async () => {
           const blob = new Blob(parts, { type: 'audio/webm' });
-          if (blob.size > 5000) sendAudioChunk(blob, 'chunk.webm');
+          if (blob.size > 5000) await sendAudioChunk(blob, 'chunk.webm');
           if (mediaRef.current?.stream) recordChunk();
+          rec.onUploaded?.();
         };
         rec.start();
         setTimeout(() => { try { rec.stop(); } catch (_) {} }, 60000);
@@ -493,9 +496,17 @@ export default function LiveScreen({ go, t, sessionUrl, pendingUpload, clearPend
   const stopRecording = async () => {
     setSaving(true);
     const { recorder, stream } = mediaRef.current || {};
+    mediaRef.current = null;   // no new minute starts after this one
+    // Wait until the last minute has actually been uploaded before saying
+    // "stopped" — otherwise it arrives late and lands outside the recording
+    const lastUploaded = new Promise(resolve => {
+      if (!recorder || recorder.state === 'inactive') return resolve();
+      recorder.onUploaded = resolve;
+      setTimeout(resolve, 20000);
+    });
     try { recorder?.stop(); } catch (_) {}
+    await lastUploaded;
     stream?.getTracks().forEach(t => t.stop());
-    mediaRef.current = null;
     setRecording(false);
     clearInterval(timerRef.current);
     wsRef.current?.close();

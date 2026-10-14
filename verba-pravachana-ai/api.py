@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
@@ -58,9 +58,12 @@ SESSIONS_FILE = "sessions.json"
 def _load_sessions():
     try:
         with open(SESSIONS_FILE) as f:
-            return json.load(f)
+            sessions = json.load(f)
     except Exception:
         return []
+    # A session with no transcript and no notes is a leftover of a recording
+    # that captured nothing (e.g. Stop pressed straight away) — never show it
+    return [x for x in sessions if (x.get("transcript") or "").strip() or (x.get("notes") or "").strip()]
 
 def _save_sessions():
     try:
@@ -94,8 +97,8 @@ sessions_store: list[dict] = _load_sessions()
 _pipeline_thread: threading.Thread | None = None
 _live_session_id: int = 0
 _pipeline_semaphore = threading.Semaphore(1)  # one pipeline at a time — Ollama is single-threaded
-_live_recording_session: dict | None = None
-_stopped_session_id: str | None = None  # ID of session saved at Stop time, so pipeline can merge into it
+_live_recording_session: dict | None = None   # the mic recording currently being captured
+_live_lock = threading.Lock()                 # guards each live session's "pending" piece count
 _active_upload_hashes: set[str] = set()  # uploads queued or processing — identical re-uploads are ignored
 
 
@@ -133,18 +136,18 @@ async def start_session(data: SessionRequest, background_tasks: BackgroundTasks)
 
 @app.post("/stop-session")
 async def stop_session():
-    global _live_session_id, _live_recording_session, _stopped_session_id
+    """Stop a YouTube run or a mic recording. A recording's notes are rebuilt
+    once over the whole transcript as soon as its last piece is processed."""
+    global _live_session_id, _live_recording_session
     stop_event.set()
-    _live_session_id += 1  # invalidate any in-flight pipeline broadcasts
-    if _live_recording_session:
-        if not _live_recording_session.get("id"):
-            _live_recording_session["id"] = str(uuid.uuid4())
-        _stopped_session_id = _live_recording_session["id"]
-        existing_ids = {s.get("id") for s in sessions_store}
-        if _live_recording_session["id"] not in existing_ids:
-            sessions_store.append(_live_recording_session)
-        _save_sessions()
-        _live_recording_session = None
+    _live_session_id += 1
+    session, _live_recording_session = _live_recording_session, None
+    if session is not None:
+        with _live_lock:
+            session["stopped"] = True
+            ready = session["pending"] == 0
+        if ready:
+            threading.Thread(target=_finalize_live_session, args=(session,), daemon=True).start()
     return {"status": "stopped"}
 
 
@@ -153,15 +156,15 @@ async def start_live():
     global _live_recording_session, _live_session_id
     _live_session_id += 1
     _live_recording_session = {
+        "id": str(uuid.uuid4()),
         "type": "chunk_complete",
-        "title": "Live Recording",
-        "transcript": "",
-        "notes": "",
-        "enhanced_notes": "",
-        "transliterated_notes": "",
-        "summary": "",
-        "shlokas": [],
-        "segments": [],
+        "title": "Live Recording – " + datetime.now().strftime("%d %b %Y, %H:%M"),
+        "created_at": datetime.utcnow().isoformat(),
+        "transcript": "", "notes": "", "enhanced_notes": "", "transliterated_notes": "",
+        "summary": "", "shlokas": [], "segments": [],
+        "pieces": [],          # per-minute results, in recording order (preview only)
+        "pending": 0,          # pieces uploaded but not yet processed
+        "stopped": False,
     }
     return {"status": "ok"}
 
@@ -231,75 +234,117 @@ async def reprocess(data: ReprocessRequest, background_tasks: BackgroundTasks):
     return {"status": "reprocessing", "chunk_index": data.chunk_index, "transcript_chars": len(transcript)}
 
 
-def _run_reprocess(chunk_index: int, audio_path: str, transcript: str):
+def _run_text_steps(transcript: str, chunk_index: int, source: str) -> dict:
+    """Every step after transcription, run once over a whole transcript."""
     from agents.shloka_detect_agent import shloka_detect_agent
     from agents.knowledge_structurer_agent import knowledge_structurer_agent
     from agents.summary_agent import summary_agent
     from agents.formatting_agent import formatting_agent
     from agents.validation_agent import validation_agent
     from agents.memory_agent import memory_agent
+    state = _new_state(audio_path=source, transcript=transcript, chunk_index=chunk_index)
+    for step in (shloka_detect_agent, knowledge_structurer_agent, summary_agent,
+                 formatting_agent, validation_agent, memory_agent):
+        state = {**state, **step(state)}
+    return state
 
+
+def _run_reprocess(chunk_index: int, audio_path: str, transcript: str):
     print(f"[reprocess] starting for chunk {chunk_index} ({len(transcript)} chars)...")
-    state = {
-        "audio_path": audio_path,
-        "youtube_url": None,
-        "transcript": transcript,
-        "detected_language": None,
-        "shlokas": None,
-        "segments": None,
-        "summary": None,
-        "key_teachings": None,
-        "notes": None,
-        "enhanced_notes": None,
-        "chunk_index": chunk_index,
-        "current_agent": None,
-        "error": None,
-    }
-    state = {**state, **shloka_detect_agent(state)}
-    state = {**state, **knowledge_structurer_agent(state)}
-    state = {**state, **summary_agent(state)}
-    state = {**state, **formatting_agent(state)}
-    state = {**state, **validation_agent(state)}
-    state = {**state, **memory_agent(state)}
-
-    chunk = {
-        "id": str(uuid.uuid4()),
-        "type": "chunk_complete",
-        "chunk_index": chunk_index,
-        "title": f"Live Recording – Chunk {chunk_index + 1}",
-        "created_at": datetime.utcnow().isoformat(),
-        "summary": state.get("summary"),
-        "notes": state.get("notes"),
-        "enhanced_notes": state.get("enhanced_notes"),
-        "transliterated_notes": state.get("transliterated_notes"),
-        "shlokas": state.get("shlokas", []),
-        "segments": state.get("segments", []),
-        "transcript": transcript,
-        "youtube_url": None,
-        **_review_fields(state, chunk_index),
-    }
+    state = _run_text_steps(transcript, chunk_index, audio_path)
+    chunk = _session_from_result({**state, "transcript": transcript}, None, chunk_index)
     _save_chunk_result(audio_path, chunk)
 
     # Update existing session if present, otherwise append
     global sessions_store
-    updated = False
     for i, s in enumerate(sessions_store):
         if s.get("chunk_index") == chunk_index:
             sessions_store[i] = {**s, **chunk, "id": s["id"], "title": s.get("title") or chunk["title"]}
-            updated = True
             break
-    if not updated:
+    else:
         sessions_store.append(chunk)
     _save_sessions()
-
-    if event_loop:
-        asyncio.run_coroutine_threadsafe(manager.broadcast(chunk), event_loop)
+    _broadcast(chunk)
     print(f"[reprocess] done for chunk {chunk_index}")
 
 
+def _new_state(**values) -> dict:
+    base = {"audio_path": None, "youtube_url": None, "transcript": None, "detected_language": None,
+            "shlokas": None, "segments": None, "summary": None, "key_teachings": None, "notes": None,
+            "enhanced_notes": None, "chunk_index": 0, "current_agent": None, "error": None}
+    return {**base, **values}
+
+
+def _broadcast(message: dict):
+    if event_loop:
+        asyncio.run_coroutine_threadsafe(manager.broadcast(message), event_loop)
+
+
+_AGENT_LABELS = {
+    "listener": "Downloading Audio", "transcription": "Transcribing Audio", "correction": "Correcting Transcript",
+    "shloka_detector": "Detecting Shlokas", "knowledge_structurer": "Structuring Knowledge", "summary": "Summarising",
+    "formatting": "Formatting Notes", "validation": "Verifying Notes", "memory": "Saving to Memory",
+}
+
+
+def _run_graph(state: dict, chunk_index: int) -> dict:
+    """Run the whole pipeline once, broadcasting progress after each step."""
+    result = {}
+    for event in langgraph_app.stream(state):
+        for node, output in event.items():
+            result.update(output)
+            _broadcast({"type": "agent_progress", "agent": node, "label": _AGENT_LABELS.get(node, node),
+                        "chunk_index": chunk_index})
+            if node == "transcription" and output.get("transcript"):
+                _broadcast({"type": "stage_result", "chunk_index": chunk_index, "stage": "transcription",
+                            "transcript": output["transcript"]})
+            elif node == "shloka_detector":
+                _broadcast({"type": "stage_result", "chunk_index": chunk_index, "stage": "shlokas",
+                            "shlokas": output.get("shlokas") or []})
+            elif node == "formatting":
+                _broadcast({"type": "stage_result", "chunk_index": chunk_index, "stage": "notes",
+                            "notes": output.get("notes") or "", "enhanced_notes": output.get("enhanced_notes") or "",
+                            "transliterated_notes": output.get("transliterated_notes") or ""})
+    return result
+
+
+def _session_from_result(result: dict, title: str | None, chunk_index: int, **extra) -> dict:
+    return {
+        "id": str(uuid.uuid4()),
+        "type": "chunk_complete",
+        "chunk_index": chunk_index,
+        "title": title or result.get("video_title") or "Pravachanam",
+        "created_at": datetime.utcnow().isoformat(),
+        "summary": result.get("summary"),
+        "notes": result.get("notes"),
+        "enhanced_notes": result.get("enhanced_notes"),
+        "transliterated_notes": result.get("transliterated_notes"),
+        "shlokas": result.get("shlokas") or [],
+        "segments": result.get("segments") or [],
+        "transcript": result.get("transcript"),
+        "raw_transcript": result.get("raw_transcript"),
+        "asr_provider": result.get("asr_provider"),
+        "asr_report": result.get("asr_report"),
+        "youtube_url": result.get("youtube_url"),
+        **_review_fields(result, chunk_index),
+        **extra,
+    }
+
+
+def _report_failure(e: Exception, chunk_index: int):
+    import traceback
+    print(f"[PIPELINE ERROR] chunk {chunk_index}: {e}")
+    traceback.print_exc()
+    # Tell the app, so an upload never sits on "processing" after it has failed
+    _broadcast({"type": "pipeline_error", "chunk_index": chunk_index, "message": str(e)[:300]})
+
+
 @app.post("/upload-audio")
-async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    global _live_session_id
+async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...),
+                       live: str | None = Form(None)):
+    """A whole audio file → one session. With live=1 it is the next one-minute
+    piece of the mic recording in progress instead."""
+    global _live_session_id, _live_recording_session
     import hashlib
     content = await file.read()
     digest = hashlib.sha1(content).hexdigest()
@@ -307,16 +352,30 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
         print(f"[upload] identical file already queued/processing — ignoring duplicate ({file.filename})")
         return {"status": "duplicate"}
     _active_upload_hashes.add(digest)
-    _live_session_id += 1
-    my_session_id = _live_session_id
-    chunk_index = len(sessions_store)
     os.makedirs("audio_input", exist_ok=True)
     ext = os.path.splitext(file.filename or "chunk.webm")[1] or ".webm"
-    audio_path = f"audio_input/live_chunk_{chunk_index}{ext}"
+
+    if live == "1":
+        if _live_recording_session is None:      # piece arrived without /start-live
+            await start_live()
+        session = _live_recording_session
+        with _live_lock:
+            piece = len(session["pieces"])
+            session["pieces"].append(None)
+            session["pending"] += 1
+        audio_path = f"audio_input/live_{session['id'][:8]}_{piece}{ext}"
+        with open(audio_path, "wb") as f:
+            f.write(content)
+        background_tasks.add_task(run_live_piece, session, piece, audio_path, digest)
+        return {"status": "processing", "piece": piece}
+
+    _live_session_id += 1
+    chunk_index = len(sessions_store)
+    audio_path = f"audio_input/upload_{digest[:12]}{ext}"
     with open(audio_path, "wb") as f:
         f.write(content)
     title = os.path.splitext(file.filename or "")[0] or None
-    background_tasks.add_task(run_pipeline_from_audio, audio_path, chunk_index, my_session_id, digest, title)
+    background_tasks.add_task(run_pipeline_from_audio, audio_path, chunk_index, _live_session_id, digest, title)
     return {"status": "processing", "chunk_index": chunk_index}
 
 
@@ -330,240 +389,111 @@ def run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int =
 
 
 def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0, title: str | None = None):
-    state = {
-        "audio_path": audio_path,
-        "youtube_url": None,
-        "transcript": None,
-        "detected_language": None,
-        "shlokas": None,
-        "segments": None,
-        "summary": None,
-        "key_teachings": None,
-        "notes": None,
-        "enhanced_notes": None,
-        "chunk_index": chunk_index,
-        "current_agent": None,
-        "error": None,
-    }
-    _AGENT_LABELS = {
-        "listener": "Downloading Audio",
-        "transcription": "Transcribing Audio",
-        "correction": "Correcting Transcript",
-        "shloka_detector": "Detecting Shlokas",
-        "knowledge_structurer": "Structuring Knowledge",
-        "summary": "Summarising",
-        "formatting": "Formatting Notes",
-        "validation": "Verifying Notes",
-        "memory": "Saving to Memory",
-    }
-
-    def _broadcast_progress(agent_name: str):
-        label = _AGENT_LABELS.get(agent_name, agent_name)
-        asyncio.run_coroutine_threadsafe(
-            manager.broadcast({"type": "agent_progress", "agent": agent_name, "label": label, "chunk_index": chunk_index}),
-            event_loop
-        )
-
-    def _broadcast_stage_result(payload: dict):
-        asyncio.run_coroutine_threadsafe(
-            manager.broadcast({"type": "stage_result", "chunk_index": chunk_index, **payload}),
-            event_loop
-        )
-
+    """An uploaded file: one pass over the whole file, one session."""
     try:
-        # Use stream mode so we can broadcast progress after each agent completes
-        result = {}
-        for event in langgraph_app.stream(state):
-            for node_name, node_output in event.items():
-                result.update(node_output)
-                _broadcast_progress(node_name)
-                # Broadcast intermediate data so frontend can show results progressively
-                if node_name == "transcription" and node_output.get("transcript"):
-                    _broadcast_stage_result({"stage": "transcription", "transcript": node_output["transcript"]})
-                elif node_name == "shloka_detector":
-                    _broadcast_stage_result({"stage": "shlokas", "shlokas": node_output.get("shlokas") or []})
-                elif node_name == "formatting":
-                    _broadcast_stage_result({"stage": "notes", "notes": node_output.get("notes") or "", "enhanced_notes": node_output.get("enhanced_notes") or "", "transliterated_notes": node_output.get("transliterated_notes") or ""})
-        chunk = {
-            "id": str(uuid.uuid4()),
-            "type": "chunk_complete",
-            "chunk_index": chunk_index,
-            "title": title or f"Live Recording – Chunk {chunk_index + 1}",
-            "summary": result.get("summary"),
-            "notes": result.get("notes"),
-            "enhanced_notes": result.get("enhanced_notes"),
-            "transliterated_notes": result.get("transliterated_notes"),
-            "shlokas": result.get("shlokas", []),
-            "segments": result.get("segments", []),
-            "transcript": result.get("transcript"),
-            "raw_transcript": result.get("raw_transcript"),
-            "asr_provider": result.get("asr_provider"),
-            "asr_report": result.get("asr_report"),
-            "youtube_url": None,
-            "created_at": datetime.utcnow().isoformat(),
-            **_review_fields(result, chunk_index),
-        }
-        # Persist result so server restarts can recover it
-        _save_chunk_result(audio_path, chunk)
-        # Merge into the live recording session (not separate entries per chunk)
-        if _live_recording_session is not None:
-            _live_recording_session["transcript"] = (_live_recording_session.get("transcript") or "") + "\n" + (chunk.get("transcript") or "")
-            _live_recording_session["notes"] = (_live_recording_session.get("notes") or "") + "\n\n" + (chunk.get("notes") or "")
-            _live_recording_session["transliterated_notes"] = (_live_recording_session.get("transliterated_notes") or "") + "\n\n" + (chunk.get("transliterated_notes") or "")
-            _live_recording_session["shlokas"] = (_live_recording_session.get("shlokas") or []) + (chunk.get("shlokas") or [])
-            _live_recording_session["segments"] = (_live_recording_session.get("segments") or []) + (chunk.get("segments") or [])
-            if chunk.get("summary"):
-                _live_recording_session["summary"] = chunk["summary"]
-            _merge_review(_live_recording_session, result, chunk_index)
-            # Auto-save after every chunk — don't wait for Stop button
-            if not _live_recording_session.get("id"):
-                _live_recording_session["id"] = str(uuid.uuid4())
-            existing_ids = {s.get("id") for s in sessions_store}
-            if _live_recording_session["id"] not in existing_ids:
-                sessions_store.append(_live_recording_session)
-            _save_sessions()
-        else:
-            # Stop was clicked before pipeline finished — merge into the stopped session if possible
-            if _stopped_session_id:
-                merged = False
-                for s in sessions_store:
-                    if s.get("id") == _stopped_session_id:
-                        s["transcript"] = ((s.get("transcript") or "") + "\n" + (chunk.get("transcript") or "")).strip()
-                        s["notes"] = ((s.get("notes") or "") + "\n\n" + (chunk.get("notes") or "")).strip()
-                        s["transliterated_notes"] = ((s.get("transliterated_notes") or "") + "\n\n" + (chunk.get("transliterated_notes") or "")).strip()
-                        s["shlokas"] = (s.get("shlokas") or []) + (chunk.get("shlokas") or [])
-                        s["segments"] = (s.get("segments") or []) + (chunk.get("segments") or [])
-                        if chunk.get("summary"):
-                            s["summary"] = chunk["summary"]
-                        _merge_review(s, result, chunk_index)
-                        merged = True
-                        break
-                if not merged:
-                    sessions_store.append(chunk)
-            else:
-                existing_ids = {s.get("id") for s in sessions_store}
-                if chunk["id"] not in existing_ids:
-                    sessions_store.append(chunk)
-            _save_sessions()
-
-        # Broadcast result — always send so frontend updates; stale pipelines just get ignored by frontend
-        asyncio.run_coroutine_threadsafe(manager.broadcast(chunk), event_loop)
+        result = _run_graph(_new_state(audio_path=audio_path, chunk_index=chunk_index), chunk_index)
+        session = _session_from_result(result, title, chunk_index)
+        _save_chunk_result(audio_path, session)
+        sessions_store.append(session)
+        _save_sessions()
+        _broadcast(session)
     except Exception as e:
-        import traceback
-        print(f"[PIPELINE ERROR] audio chunk {chunk_index}: {e}")
-        traceback.print_exc()
-        # Tell the app, so an upload never sits on "processing" after it has failed
-        if event_loop:
-            asyncio.run_coroutine_threadsafe(manager.broadcast(
-                {"type": "pipeline_error", "chunk_index": chunk_index, "message": str(e)[:300]}), event_loop)
+        _report_failure(e, chunk_index)
+
+
+def run_live_piece(session: dict, piece: int, audio_path: str, digest: str):
+    """One minute of a mic recording, transcribed for the live preview. The final
+    notes are built once over the whole recording when it stops."""
+    try:
+        with _pipeline_semaphore:
+            result = _run_graph(_new_state(audio_path=audio_path, chunk_index=piece, live_piece=True), piece)
+        session["pieces"][piece] = result
+        done = [p for p in session["pieces"] if p]
+        session["transcript"] = "\n".join(p.get("transcript") or "" for p in done).strip()
+        session["raw_transcript"] = "\n".join(p.get("raw_transcript") or p.get("transcript") or "" for p in done).strip()
+        session["notes"] = "\n\n".join(p.get("notes") or "" for p in done).strip()
+        session["enhanced_notes"] = session["notes"]
+        session["transliterated_notes"] = "\n\n".join(p.get("transliterated_notes") or "" for p in done).strip()
+        session["shlokas"] = [s for p in done for s in (p.get("shlokas") or [])]
+        session["asr_provider"] = result.get("asr_provider")
+        _save_live_preview(session)
+        _broadcast({"type": "chunk_complete", "chunk_index": piece, "title": session["title"],
+                    "notes": result.get("notes"), "shlokas": result.get("shlokas") or [],
+                    "transcript": result.get("transcript")})
+    except Exception as e:
+        _report_failure(e, piece)
+    finally:
+        _active_upload_hashes.discard(digest)
+        with _live_lock:
+            session["pending"] -= 1
+            ready = session["stopped"] and session["pending"] == 0
+        if ready:
+            _finalize_live_session(session)
+
+
+def _stored(session: dict) -> dict:
+    """What gets saved: everything except the in-memory bookkeeping."""
+    return {k: v for k, v in session.items() if k not in ("pieces", "pending", "stopped")}
+
+
+def _save_live_preview(session: dict):
+    if not session["transcript"]:
+        return
+    for i, s in enumerate(sessions_store):
+        if s.get("id") == session["id"]:
+            sessions_store[i] = _stored(session)
+            break
+    else:
+        sessions_store.append(_stored(session))
+    _save_sessions()
+
+
+def _finalize_live_session(session: dict):
+    """Rebuild the recording's notes once, over its whole transcript."""
+    global sessions_store
+    transcript = session.get("transcript") or ""
+    if not transcript.strip():
+        sessions_store = [s for s in sessions_store if s.get("id") != session["id"]]
+        _save_sessions()
+        print("[live] recording captured no speech — nothing saved")
+        _broadcast({"type": "session_complete", "session_id": session["id"], "empty": True})
+        return
+    pieces = [p for p in session["pieces"] if p]
+    print(f"[live] finalizing recording ({len(pieces)} piece(s), {len(transcript)} chars) as one set of notes...")
+    try:
+        with _pipeline_semaphore:
+            result = _run_text_steps(transcript, 0, f"live:{session['id']}")
+        final = _session_from_result({**result, "transcript": transcript}, session["title"], 0,
+                                     raw_transcript=session.get("raw_transcript"),
+                                     asr_provider=session.get("asr_provider"),
+                                     pieces_recorded=len(pieces))
+        final["id"], final["created_at"] = session["id"], session["created_at"]
+        for i, s in enumerate(sessions_store):
+            if s.get("id") == session["id"]:
+                sessions_store[i] = final
+                break
+        else:
+            sessions_store.append(final)
+        _save_sessions()
+        _broadcast({"type": "session_complete", "session_id": session["id"]})
+        print("[live] recording finalized")
+    except Exception as e:
+        _report_failure(e, 0)
 
 
 def run_pipeline(youtube_url: str):
+    """A YouTube video: the whole audio (or its captions) in one pass, one session."""
     global _pipeline_thread
     _pipeline_thread = threading.current_thread()
-    chunk_index = 0
-
-    # Accumulate all chunks into one merged session
-    merged = {
-        "id": str(uuid.uuid4()),
-        "type": "chunk_complete",
-        "title": "",
-        "transcript": "",
-        "notes": "",
-        "enhanced_notes": "",
-        "transliterated_notes": "",
-        "summary": "",
-        "shlokas": [],
-        "segments": [],
-        "youtube_url": youtube_url,
-        "created_at": datetime.utcnow().isoformat(),
-        "needs_manual_review": False,
-        "validation_errors": [],
-    }
-
-    while not stop_event.is_set():
-        state = {
-            "audio_path": None,
-            "youtube_url": youtube_url,
-            "transcript": None,
-            "detected_language": None,
-            "shlokas": None,
-            "segments": None,
-            "summary": None,
-            "key_teachings": None,
-            "notes": None,
-            "enhanced_notes": None,
-            "chunk_index": chunk_index,
-            "current_agent": None,
-            "error": None,
-        }
-
-        try:
-            result = langgraph_app.invoke(state)
-
-            if stop_event.is_set():
-                break
-
-            # Listener signals video is fully processed
-            if result.get("error") == "video_ended":
-                print(f"[pipeline] video fully processed after {chunk_index} chunks")
-                sessions_store.append(merged)
-                _save_sessions()
-                asyncio.run_coroutine_threadsafe(
-                    manager.broadcast({"type": "session_complete", "total_chunks": chunk_index}),
-                    event_loop,
-                )
-                break
-
-            video_title = result.get("video_title") or merged["title"] or "Pravachanam"
-            merged["title"] = video_title
-            merged["transcript"] = (merged["transcript"] + "\n" + (result.get("transcript") or "")).strip()
-            merged["notes"] = (merged["notes"] + "\n\n" + (result.get("notes") or "")).strip()
-            merged["enhanced_notes"] = (merged["enhanced_notes"] + "\n\n" + (result.get("enhanced_notes") or "")).strip()
-            merged["transliterated_notes"] = (merged["transliterated_notes"] + "\n\n" + (result.get("transliterated_notes") or "")).strip()
-            merged["shlokas"] += result.get("shlokas") or []
-            merged["segments"] += result.get("segments") or []
-            if result.get("summary"):
-                merged["summary"] = result["summary"]
-            _merge_review(merged, result, chunk_index)
-
-            # Broadcast incremental chunk so Live screen updates in real time
-            chunk = {
-                "type": "chunk_complete",
-                "chunk_index": chunk_index,
-                "title": video_title,
-                "notes": result.get("notes"),
-                "shlokas": result.get("shlokas", []),
-                "transcript": result.get("transcript"),
-                **_review_fields(result, chunk_index),
-            }
-            asyncio.run_coroutine_threadsafe(manager.broadcast(chunk), event_loop)
-
-            # Captions cover the whole video in one go — downloading audio for the
-            # next chunks would transcribe everything after 2:00 a second time.
-            if result.get("caption_text"):
-                print("[pipeline] full video processed from YouTube captions")
-                sessions_store.append(merged)
-                _save_sessions()
-                asyncio.run_coroutine_threadsafe(
-                    manager.broadcast({"type": "session_complete", "total_chunks": chunk_index + 1}),
-                    event_loop,
-                )
-                break
-
-        except Exception as e:
-            import traceback
-            print(f"[PIPELINE ERROR] chunk {chunk_index}: {e}")
-            traceback.print_exc()
-            if event_loop:
-                asyncio.run_coroutine_threadsafe(manager.broadcast(
-                    {"type": "pipeline_error", "chunk_index": chunk_index, "message": str(e)[:300]}), event_loop)
-            break
-
-        chunk_index += 1
-
-        max_chunks = state.get("total_chunks")
-        if max_chunks and chunk_index >= max_chunks:
-            sessions_store.append(merged)
-            _save_sessions()
-            break
+    try:
+        with _pipeline_semaphore:
+            result = _run_graph(_new_state(youtube_url=youtube_url), 0)
+        if stop_event.is_set():
+            return
+        session = _session_from_result({**result, "youtube_url": youtube_url}, None, 0)
+        sessions_store.append(session)
+        _save_sessions()
+        _broadcast(session)
+        _broadcast({"type": "session_complete", "total_chunks": 1})
+    except Exception as e:
+        _report_failure(e, 0)

@@ -31,86 +31,55 @@ def listener_agent(state: VerbaState) -> VerbaState:
     if video_title and not state.get("video_title"):
         state["video_title"] = video_title
 
-    start_sec = chunk_index * 120
-    if start_sec >= duration:
-        print(f"[listener] chunk {chunk_index} starts at {start_sec}s, video is {duration}s — done")
-        state["audio_path"] = None
-        state["current_agent"] = "video_ended"
-        state["error"] = "video_ended"
-        return state
-
-    # ── Step 2: try downloading YouTube captions (Telugu or Tamil) ──────────
-    # Only do this on chunk 0 — captions cover the full video
-    caption_text = None
-    if chunk_index == 0:
-        caption_base = f"audio_input/captions_{chunk_index}"
-        cap_opts = {
-            "quiet": True,
-            "noplaylist": True,
-            "writeautomaticsub": True,
-            "writesubtitles": True,
-            "subtitleslangs": ["te", "ta", "te-IN", "ta-IN"],
-            "subtitlesformat": "vtt",
-            "skip_download": True,
-            "outtmpl": caption_base,
-            "js_runtimes": _JS_RUNTIMES,
-        }
-        try:
-            with yt_dlp.YoutubeDL(cap_opts) as ydl:
-                ydl.download([youtube_url])
-        except Exception as e:
-            print(f"[listener] subtitle download failed ({e.__class__.__name__}), falling back to audio")
-
-        # Find any .vtt file that was written
-        vtt_files = glob.glob(f"{caption_base}*.vtt")
-        if vtt_files:
-            caption_text = _parse_vtt(vtt_files[0])
-            print(f"[listener] found YouTube captions ({len(caption_text)} chars) — skipping Whisper")
-            state["audio_path"] = None
-            state["caption_text"] = caption_text
-            state["current_agent"] = "captions_ready"
-            return state
-        else:
-            print("[listener] no YouTube captions available — falling back to audio")
-
-    # ── Step 3: fallback — download audio chunk ─────────────────────────────
-    end_sec = start_sec + 120
-    output_path = f"audio_input/chunk_{chunk_index}.mp3"
-
+    # ── Step 2: YouTube captions (Telugu or Tamil), if the video has them ───
+    caption_base = "audio_input/captions"
+    cap_opts = {
+        "quiet": True,
+        "noplaylist": True,
+        "writeautomaticsub": True,
+        "writesubtitles": True,
+        "subtitleslangs": ["te", "ta", "te-IN", "ta-IN"],
+        "subtitlesformat": "vtt",
+        "skip_download": True,
+        "outtmpl": caption_base,
+        "js_runtimes": _JS_RUNTIMES,
+    }
+    for old in glob.glob(f"{caption_base}*.vtt"):
+        os.remove(old)
     try:
-        from yt_dlp.utils import download_range_func
-        ranges = download_range_func(None, [(start_sec, end_sec)])
-    except ImportError:
-        ranges = None
+        with yt_dlp.YoutubeDL(cap_opts) as ydl:
+            ydl.download([youtube_url])
+    except Exception as e:
+        print(f"[listener] subtitle download failed ({e.__class__.__name__}), falling back to audio")
+    vtt_files = glob.glob(f"{caption_base}*.vtt")
+    if vtt_files:
+        caption_text = _parse_vtt(vtt_files[0])
+        print(f"[listener] found YouTube captions ({len(caption_text)} chars) — skipping transcription")
+        state["audio_path"] = None
+        state["caption_text"] = caption_text
+        state["current_agent"] = "captions_ready"
+        return state
+    print("[listener] no YouTube captions available — downloading the audio")
 
+    # ── Step 3: the whole audio, once — transcription splits long audio itself ──
+    video_id = info.get("id") or "video"
     ydl_opts = {
         "format": "bestaudio/best",
         "quiet": True,
         "noplaylist": True,
-        "outtmpl": f"audio_input/chunk_{chunk_index}.%(ext)s",
+        "outtmpl": f"audio_input/yt_{video_id}.%(ext)s",
         "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
         "js_runtimes": _JS_RUNTIMES,
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "128",
-        }],
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}],
     }
-    if ranges:
-        ydl_opts["download_ranges"] = ranges
-        ydl_opts["force_keyframes_at_cuts"] = True
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([youtube_url])
-
+    output_path = f"audio_input/yt_{video_id}.mp3"
+    if not os.path.exists(output_path):
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([youtube_url])
     if not os.path.exists(output_path) or os.path.getsize(output_path) < 5000:
-        print(f"[listener] chunk {chunk_index} file too small — video likely ended")
-        state["audio_path"] = None
-        state["current_agent"] = "video_ended"
-        state["error"] = "video_ended"
-        return state
+        raise RuntimeError("could not download the video's audio")
 
-    print(f"[listener] downloaded chunk {chunk_index} ({start_sec}s–{end_sec}s, {os.path.getsize(output_path)//1024}KB)")
+    print(f"[listener] downloaded full audio ({duration}s, {os.path.getsize(output_path)//1024}KB)")
     state["audio_path"] = output_path
     state["current_agent"] = "listening_done"
     return state

@@ -1,37 +1,13 @@
+"""Command-line run: one YouTube video (or a local audio file) → one set of notes."""
+import sys
 from graph.orchestrator import app
 
-YOUTUBE_URL = "https://www.youtube.com/watch?v=u2_I4Wy4BNs"
+source = sys.argv[1] if len(sys.argv) > 1 else "https://www.youtube.com/watch?v=u2_I4Wy4BNs"
+state = {"chunk_index": 0}
+state["youtube_url" if source.startswith("http") else "audio_path"] = source
 
-chunk_index = 0
-MAX_CHUNKS = 2
-
-while chunk_index < MAX_CHUNKS:
-    print(f"\n--- Processing chunk {chunk_index} ---")
-
-    state = {
-        "audio_path": None,
-        "youtube_url": YOUTUBE_URL,
-        "transcript": None,
-        "detected_language": None,
-        "shlokas": None,
-        "segments": None,
-        "summary": None,
-        "key_teachings": None,
-        "notes": None,
-        "enhanced_notes": None,
-        "chunk_index": chunk_index,
-        "current_agent": None,
-        "error": None
-    }
-
-    result = app.invoke(state)
-
-    print(f"Chunk {chunk_index} done.")
-    print(f"Summary: {result.get('summary', '')[:200]}")
-    print(f"Needs manual review: {result.get('needs_manual_review')}")
-
-    # Captions cover the whole video; stop instead of re-transcribing it from audio
-    if result.get("caption_text") or result.get("error") == "video_ended":
-        break
-
-    chunk_index += 1
+result = app.invoke(state)
+print(f"Title: {result.get('video_title') or source}")
+print(f"Transcript: {len(result.get('transcript') or '')} chars, notes: {len(result.get('notes') or '')} chars")
+print(f"Summary: {(result.get('summary') or '')[:200]}")
+print(f"Needs manual review: {result.get('needs_manual_review')}")

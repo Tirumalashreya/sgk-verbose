@@ -22,6 +22,7 @@ class VerbaState(TypedDict):
     video_title: Optional[str]
     transcript_segments: Optional[List[dict]]
     caption_text: Optional[str]
+    live_piece: Optional[bool]             # one minute of a mic recording (preview only)
     validation_passed: Optional[bool]
     validation_errors: Optional[List[dict]]
     needs_manual_review: Optional[bool]
