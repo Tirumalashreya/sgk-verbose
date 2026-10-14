@@ -19,8 +19,9 @@ LLM_PIECE_SECONDS = 3 * 60    # short pieces keep a general model from skipping 
 LLM_PROMPT = (
     "Transcribe this audio exactly, word for word, in Telugu script. The speaker is giving a Telugu "
     "spiritual discourse and recites Sanskrit shlokas and Tamil pasurams. Include every Sanskrit and "
-    "Tamil verse exactly as spoken, in Telugu script. Do not skip, summarize, translate, correct or "
-    "explain anything. If a word is unclear, write [?]. Output only the transcript."
+    "Tamil verse exactly as spoken, in Telugu script. Write numbers exactly as spoken, in Telugu "
+    "words — never use digits (e.g. write మూడు వందల, not 300). Do not skip, summarize, translate, "
+    "correct or explain anything. If a word is unclear, write [?]. Output only the transcript."
 )
 PHRASE_GAP = 0.5              # word gap (s) that ends a phrase segment
 VOCAB_SIZE = 100              # docs: custom vocabulary works best around 100 terms

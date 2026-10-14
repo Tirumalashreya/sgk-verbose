@@ -451,6 +451,10 @@ def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int 
         import traceback
         print(f"[PIPELINE ERROR] audio chunk {chunk_index}: {e}")
         traceback.print_exc()
+        # Tell the app, so an upload never sits on "processing" after it has failed
+        if event_loop:
+            asyncio.run_coroutine_threadsafe(manager.broadcast(
+                {"type": "pipeline_error", "chunk_index": chunk_index, "message": str(e)[:300]}), event_loop)
 
 
 def run_pipeline(youtube_url: str):
@@ -550,6 +554,9 @@ def run_pipeline(youtube_url: str):
             import traceback
             print(f"[PIPELINE ERROR] chunk {chunk_index}: {e}")
             traceback.print_exc()
+            if event_loop:
+                asyncio.run_coroutine_threadsafe(manager.broadcast(
+                    {"type": "pipeline_error", "chunk_index": chunk_index, "message": str(e)[:300]}), event_loop)
             break
 
         chunk_index += 1

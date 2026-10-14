@@ -1,5 +1,4 @@
 from graph.state import VerbaState
-from groq import Groq
 from sarvamai import SarvamAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os, subprocess, requests
@@ -11,10 +10,6 @@ _cred_path = os.path.join(os.path.dirname(__file__), "..", os.getenv("GOOGLE_APP
 if os.path.exists(_cred_path):
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.abspath(_cred_path)
 
-_WHISPER_KEYS = [k for k in [
-    os.getenv("GROQ_API_KEY_WHISPER"),
-    os.getenv("GROQ_API_KEY_WHISPER2"),
-] if k]
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 sarvam_client = SarvamAI(api_subscription_key=SARVAM_API_KEY) if SARVAM_API_KEY else None
 
@@ -192,40 +187,6 @@ def _sarvam_stt(path: str, settings: dict | None = None) -> tuple:
     return full_text, "te", [], len(failed)
 
 
-def _whisper_chunk(path: str):
-    """Send one file to Groq Whisper, rotating across all available keys on error."""
-    import time as _time
-    import re as _re
-
-    if os.path.getsize(path) < 1000:
-        print(f"[transcription] skipping tiny file {path}")
-        return None
-
-    if not _WHISPER_KEYS:
-        raise RuntimeError("No Groq Whisper key set (GROQ_API_KEY_WHISPER) — cannot fall back to Whisper")
-    attempts = len(_WHISPER_KEYS) * 3  # 3 tries per key
-    for attempt in range(attempts):
-        key = _WHISPER_KEYS[attempt % len(_WHISPER_KEYS)]
-        client = Groq(api_key=key)
-        try:
-            with open(path, "rb") as f:
-                result = client.audio.transcriptions.create(
-                    file=(os.path.basename(path), f),
-                    model="whisper-large-v3",
-                    language="te",
-                    response_format="verbose_json"
-                )
-            return result
-        except Exception as e:
-            msg = str(e)
-            m = _re.search(r'try again in ([\d.]+)s', msg)
-            wait = float(m.group(1)) + 2 if m else 15
-            key_num = (attempt % len(_WHISPER_KEYS)) + 1
-            print(f"[transcription] Whisper key {key_num} error (attempt {attempt+1}/{attempts}), retrying in {wait:.0f}s: {msg[:100]}")
-            _time.sleep(wait)
-    raise RuntimeError("Groq Whisper failed after all attempts")
-
-
 def _split_audio(path: str, max_sec: int = 300) -> list:
     """Split audio into max_sec chunks using ffmpeg. Returns list of chunk paths."""
     import subprocess, json as _json
@@ -256,33 +217,13 @@ def _split_audio(path: str, max_sec: int = 300) -> list:
     return chunks
 
 
-def _whisper_stt(path: str):
-    print("[transcription] falling back to Groq Whisper...")
-    mp3_path = _to_mp3_16k(path)
-    chunks = _split_audio(mp3_path, max_sec=300)
-
-    all_text, all_segs, lang = [], [], "te"
-    offset = 0.0
-    for chunk_path in chunks:
-        result = _whisper_chunk(chunk_path)
-        if result is None:
-            continue
-        all_text.append(result.text.strip())
-        lang = result.language or lang
-        segs = getattr(result, "segments", []) or []
-        for seg in segs:
-            start = (seg.get("start") if isinstance(seg, dict) else getattr(seg, "start", 0)) + offset
-            end   = (seg.get("end")   if isinstance(seg, dict) else getattr(seg, "end",   0)) + offset
-            text  = (seg.get("text")  if isinstance(seg, dict) else getattr(seg, "text",  "")).strip()
-            print(f"  [{start:.1f}s → {end:.1f}s] {text}")
-            all_segs.append({"start": start, "end": end, "text": text})
-        chunk_dur = float(subprocess.run(
-            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", chunk_path],
-            capture_output=True, text=True
-        ).stdout.strip() or 0)
-        offset += chunk_dur
-
-    return " ".join(all_text), lang, all_segs
+def _short_error(e: Exception) -> str:
+    msg = str(e)
+    for code, text in (("402", "out of credits"), ("401", "invalid key"), ("403", "permission denied"),
+                       ("429", "rate limit / quota"), ("503", "service overloaded")):
+        if code in msg:
+            return text
+    return msg[:120]
 
 
 def transcription_agent(state: VerbaState) -> VerbaState:
@@ -310,8 +251,8 @@ def transcription_agent(state: VerbaState) -> VerbaState:
     print(f"[transcription] chunk {chunk_index} — {path}")
 
     # Providers in preference order (ASR_PROVIDER picks the first); each falls
-    # through to the next on failure or an empty result, Whisper last
-    providers = []
+    # through to the next on failure or an empty result
+    providers, errors = [], []
     choice = os.getenv("ASR_PROVIDER", "sarvam").lower()
     if choice == "gemini" and os.getenv("GEMINI_API_KEY"):
         from agents.gemini_asr import gemini_stt
@@ -334,15 +275,11 @@ def transcription_agent(state: VerbaState) -> VerbaState:
                 state["current_agent"] = "transcription_done"
                 return state
             print(f"[transcription] {name} returned empty — trying next provider")
+            errors.append(f"{name}: no speech transcribed")
         except Exception as e:
             print(f"[transcription] {name} failed ({e}) — trying next provider")
+            errors.append(f"{name}: {_short_error(e)}")
 
-    # Fallback: Groq Whisper
-    text, lang, segments = _whisper_stt(path)
-    state["asr_provider"] = "whisper"
-    print(f"[transcription] Whisper done ({len(text)} chars): {text[:300]}")
-    state["transcript"] = text
-    state["detected_language"] = lang
-    state["transcript_segments"] = segments
-    state["current_agent"] = "transcription_done"
-    return state
+    # No last-resort fallback: a transcript missing most of the talk (as Whisper
+    # produced on test recordings) is worse than a failure that says so
+    raise RuntimeError("All transcription services failed — " + "; ".join(errors))

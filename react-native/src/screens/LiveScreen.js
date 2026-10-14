@@ -210,6 +210,16 @@ export default function LiveScreen({ go, t, sessionUrl, pendingUpload, clearPend
 
   // ── WebSocket handler ─────────────────────────────────────────────────────
   const handleWsMessage = (data) => {
+    // The backend gave up on this file (e.g. every transcription service failed)
+    if (data.type === 'pipeline_error' && fileUploadRef.current) {
+      fileUploadRef.current = false;
+      clearInterval(timerRef.current);
+      stopPolling();
+      setActiveStage(null);
+      setUpload?.(u => (u ? { ...u, status: 'error', message: data.message } : u));
+      return;
+    }
+
     // Pipeline stage just completed → update stepper
     if (data.type === 'agent_progress') {
       const idx = STAGE_IDX[data.agent] ?? -1;
@@ -600,7 +610,7 @@ export default function LiveScreen({ go, t, sessionUrl, pendingUpload, clearPend
                          borderWidth: 1, borderColor: upload.status === 'error' ? 'rgba(224,80,80,0.45)' : 'rgba(127,221,127,0.35)' }}>
             <Text style={{ fontSize: 12, fontFamily: F.sansSemi, color: upload.status === 'error' ? '#f0a0a0' : '#a8e6a8' }}>
               {upload.status === 'uploading' ? `⇪ Uploading ${upload.name}…`
-                : upload.status === 'error' ? `⚠ Upload of ${upload.name} failed — try again`
+                : upload.status === 'error' ? `⚠ ${upload.name} failed${upload.message ? `: ${upload.message}` : ''} — fix it and upload again`
                 : upload.duplicate ? `✓ ${upload.name} is already being processed — no need to upload again`
                 : `✓ Uploaded ${upload.name} — processing, no need to upload again`}
             </Text>
