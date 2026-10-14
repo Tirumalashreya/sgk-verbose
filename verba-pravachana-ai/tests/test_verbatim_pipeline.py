@@ -517,3 +517,13 @@ def test_gemini_empty_piece_is_a_gap_not_silence(monkeypatch):
     monkeypatch.setattr(g, "_sarvam_fallback", lambda p: "")
     text, _, _, gaps = g.gemini_stt("x.mp3", "llm")
     assert text == "text-p0 [?] text-p2" and gaps == 1
+
+
+def test_everyday_tamil_words_are_not_pasuram_evidence():
+    # "ఆళ్వార్" has a Tamil letter but is ordinary Telugu discourse vocabulary
+    from agents.verbatim import _TAMIL_CUES
+    from agents.verse_library import _EVERYDAY_TAMIL_WORDS
+    plain = "అవతరించినటువంటి ఆళ్వార్లున్నారు పెరుమాళ్ళ సేవ"
+    assert _TAMIL_CUES.search(plain)                                   # the raw cue fires...
+    assert not _TAMIL_CUES.search(_EVERYDAY_TAMIL_WORDS.sub(" ", plain))  # ...but not after removing loanwords
+    assert _TAMIL_CUES.search(_EVERYDAY_TAMIL_WORDS.sub(" ", "ఇందిరన్ సిరువంతేర్మున్ నింద్రాని"))

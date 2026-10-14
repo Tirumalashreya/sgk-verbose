@@ -17,6 +17,10 @@ LIBRARY = os.path.join(os.path.dirname(__file__), "..", "data", "verse_library",
 MIN_SCORE = 82        # partial_ratio on skeletons; unrelated lines score ~40–60
 MIN_LINE_SKELETON = 14
 MIN_MATCH_SKELETON = 20   # shorter matches happen by chance among 4,000 pasurams
+
+# Tamil-origin words used all the time in Telugu Vaishnava talks. Their Tamil
+# letters (ళ, final -ర్...) are not evidence that a pasuram is being recited.
+_EVERYDAY_TAMIL_WORDS = re.compile(r"ఆళ్వా[రర్]\S*|పెరుమా[ళల]\S*|తిరుమల\S*|తిరుపతి\S*|తిరునక్షత్ర\S*")
 NGRAM = 5
 
 _FOLD = [("ḻ", "l"), ("ḷ", "l"), ("ṟ", "r"), ("ṉ", "n"), ("ṇ", "n"), ("ñ", "n"), ("ṅ", "n"), ("ṃ", "n"),
@@ -119,7 +123,7 @@ def find_pasurams(norm_transcript: str) -> list[dict]:
         heard = norm_transcript[words[m["w0"]][0]:words[m["w1"]][1]]
         # Ordinary Telugu sentences sometimes sound like a pasuram line; a real
         # quote carries Tamil word shapes (final -న్/-ల్/-ర్, ళ, -ై endings...)
-        if len(skeleton(heard)) < MIN_MATCH_SKELETON or not _TAMIL_CUES.search(heard):
+        if len(skeleton(heard)) < MIN_MATCH_SKELETON or not _TAMIL_CUES.search(_EVERYDAY_TAMIL_WORDS.sub(" ", heard)):
             continue
         taken |= span
         v = m["verse"]
