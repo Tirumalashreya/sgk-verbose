@@ -30,9 +30,16 @@ _CACHE_DIR = os.path.join("audio_input", ".gemini_cache")
 _TERMS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "vaishnava_terms.json")
 
 _client = None
+_client_lock = __import__("threading").Lock()
 
 
 def _get_client():
+    global _client
+    with _client_lock:   # threads racing here created two clients and one was closed mid-request
+        return _get_client_locked()
+
+
+def _get_client_locked():
     global _client
     if _client is None:
         from google import genai

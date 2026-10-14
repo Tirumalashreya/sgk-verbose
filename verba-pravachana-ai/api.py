@@ -398,6 +398,7 @@ def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int 
             "transcript": result.get("transcript"),
             "raw_transcript": result.get("raw_transcript"),
             "asr_provider": result.get("asr_provider"),
+            "asr_report": result.get("asr_report"),
             "youtube_url": None,
             "created_at": datetime.utcnow().isoformat(),
             **_review_fields(result, chunk_index),

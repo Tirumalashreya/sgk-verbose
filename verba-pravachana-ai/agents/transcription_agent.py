@@ -257,6 +257,9 @@ def transcription_agent(state: VerbaState) -> VerbaState:
     if choice == "gemini" and os.getenv("GEMINI_API_KEY"):
         from agents.gemini_asr import gemini_stt
         providers.append(("Gemini", gemini_stt))
+    if choice == "dual" and SARVAM_API_KEY and os.getenv("GEMINI_API_KEY"):
+        from agents.dual_asr import dual_stt
+        providers.append(("Dual", dual_stt))
     if choice == "google" and os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
         from agents.google_asr import chirp_stt
         providers.append(("Google", chirp_stt))
@@ -265,7 +268,10 @@ def transcription_agent(state: VerbaState) -> VerbaState:
 
     for name, stt in providers:
         try:
-            text, lang, segments, gaps = stt(path)
+            result = stt(path)
+            text, lang, segments, gaps = result[:4]
+            if len(result) > 4:
+                state["asr_report"] = result[4]   # two-listener agreement and judge decisions
             if text.strip() and text.replace(GAP_MARKER, "").strip():
                 state["transcription_gaps"] = gaps
                 state["transcript"] = text

@@ -544,3 +544,40 @@ def test_groq_retries_a_cut_off_reply(monkeypatch):
     monkeypatch.setattr(g, "_request", fake)
     monkeypatch.setattr(g.time, "sleep", lambda s: None)
     assert g.call("p", "GROQ_API_KEY_STRUCTURER") == "good"
+
+
+# ── two listeners ─────────────────────────────────────────────────────────────
+
+def test_dual_alignment_keeps_agreement_and_routes_real_disputes():
+    from agents.dual_asr import align, merge
+    a = "ఇది ప్రశ్న ఆరు ప్రశ్నలు అడిగాడు సౌనకాదులకు".split()          # Sarvam
+    b = "ఇది ప్రశ్న. ఆరు ప్రశ్నలు అడిగారు శౌనకాదులకు".split()        # Gemini
+    ops = align(a, [0] * len(a), b)
+    disputes = [op for op in ops if "keep" not in op]
+    # punctuation and the సౌ/శౌ spelling variant need no judge; అడిగాడు/అడిగారు is a real dispute
+    assert len(disputes) == 1 and disputes[0]["a"] == ["అడిగాడు"] and disputes[0]["b"] == ["అడిగారు"]
+    tokens, uncertain = merge(ops, {0: "A"})
+    assert " ".join(tokens) == "ఇది ప్రశ్న. ఆరు ప్రశ్నలు అడిగాడు శౌనకాదులకు" and uncertain == []
+    tokens, uncertain = merge(ops, {0: "?"})
+    assert "అడిగారు" in tokens and uncertain[0]["sarvam"] == "అడిగాడు"
+
+
+def test_dual_judge_may_only_answer_a_b_or_unsure(monkeypatch, tmp_path):
+    import types as _t
+    from agents import dual_asr as d, gemini_asr as g
+    monkeypatch.chdir(tmp_path)
+    clip = tmp_path / "c.mp3"; clip.write_bytes(b"audio")
+    reply = _t.SimpleNamespace(text='{"1": "A", "2": "B", "3": "మూడు వందల", "4": "?"}')
+    client = _t.SimpleNamespace(models=_t.SimpleNamespace(generate_content=lambda **k: reply))
+    monkeypatch.setattr(g, "_get_client", lambda: client)
+    items = [{"a": ["x"], "b": ["y"], "before": "", "after": ""}] * 4
+    assert d._judge_chunk(str(clip), items, "m") == {"1": "A", "2": "B", "3": "?", "4": "?"}
+
+
+def test_dual_alignment_does_not_pair_words_shifted_by_a_join():
+    from agents.dual_asr import align
+    a = "ధర్మము ఎవనిని శరణుజొచ్చెను ఎందుకు చెప్తారు కలియుగం".split()
+    b = "ధర్మము ఎవరిని శరణు జొచ్చెను? ఎందుచేత? కలియుగం".split()
+    disputes = [op for op in align(a, [0] * len(a), b) if "keep" not in op]
+    assert len(disputes) == 1                       # one phrase-level dispute, not 4 nonsense pairs
+    assert disputes[0]["a"][0] == "ఎవనిని" and disputes[0]["b"][-1] == "ఎందుచేత?"

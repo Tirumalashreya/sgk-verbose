@@ -5,7 +5,8 @@ class VerbaState(TypedDict):
     youtube_url: Optional[str] 
     transcript: Optional[str]
     raw_transcript: Optional[str]          # ASR output before term fixes
-    asr_provider: Optional[str]            # sarvam | gemini | whisper
+    asr_provider: Optional[str]            # dual | gemini | sarvam | google
+    asr_report: Optional[dict]             # two-listener agreement, judge decisions, unresolved spots
     transcription_gaps: Optional[int]      # audio pieces ASR failed on, shown as [?]
     detected_language: Optional[str]
     shlokas: Optional[List[dict]]
