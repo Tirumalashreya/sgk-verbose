@@ -507,3 +507,13 @@ def test_without_library_nothing_changes(monkeypatch, tmp_path):
     vl._index.cache_clear()
     assert vl.find_pasurams("ఇందిరన్ సిరువంతేర్మున్ నింద్రాని") == [] and vl.match_verse("విసిత్తిరత్తేర్వలైవ") is None
     vl._index.cache_clear()
+
+
+def test_gemini_empty_piece_is_a_gap_not_silence(monkeypatch):
+    from agents import gemini_asr as g, transcription_agent as ta
+    monkeypatch.setattr(ta, "_to_mp3_16k", lambda p: p)
+    monkeypatch.setattr(ta, "_split_audio", lambda p, max_sec: ["p0", "p1", "p2"])
+    monkeypatch.setattr(g, "_llm_piece", lambda path, use_cache=True: "" if path == "p1" else f"text-{path}")
+    monkeypatch.setattr(g, "_sarvam_fallback", lambda p: "")
+    text, _, _, gaps = g.gemini_stt("x.mp3", "llm")
+    assert text == "text-p0 [?] text-p2" and gaps == 1

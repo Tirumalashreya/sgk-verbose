@@ -149,7 +149,7 @@ def _llm_piece(path: str, use_cache: bool = True, attempts: int = 3) -> str:
         audio = f.read()
     tag = hashlib.sha1((LLM_MODEL + LLM_PROMPT).encode()).hexdigest()[:8]
     cache = os.path.join(_CACHE_DIR, f"llm-{tag}-{hashlib.sha1(audio).hexdigest()}.txt")
-    if use_cache and os.path.exists(cache):
+    if use_cache and os.path.exists(cache) and os.path.getsize(cache) > 0:
         with open(cache, encoding="utf-8") as f:
             return f.read()
     client = _get_client()
@@ -160,6 +160,10 @@ def _llm_piece(path: str, use_cache: bool = True, attempts: int = 3) -> str:
                 contents=[types.Part.from_bytes(data=audio, mime_type="audio/mpeg"), LLM_PROMPT],
                 config=types.GenerateContentConfig(temperature=0),
             )
+            if not (result.text or "").strip():
+                # An empty reply is a failure, not "nothing was said" — accepting it
+                # silently dropped 3 minutes of a test recording
+                raise RuntimeError("empty transcription returned")
             break
         except Exception as e:
             if attempt == attempts - 1:
@@ -202,6 +206,8 @@ def gemini_stt(path: str, mode: str | None = None, use_cache: bool = True) -> tu
                 text, phrases = _llm_piece(piece, use_cache=use_cache), []
             else:
                 text, phrases = _transcribe_piece(piece, mode, offset, use_cache=use_cache)
+            if not text.strip():
+                raise RuntimeError("empty transcription returned")
             texts.append(text)
             segments.extend(phrases)
             print(f"  [gemini piece {i + 1}/{len(pieces)}] {len(text)} chars")
