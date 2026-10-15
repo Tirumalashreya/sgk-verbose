@@ -98,12 +98,12 @@ export default function ReadingScreen({ go, back, t, session: given }) {
       </View>
 
       <View style={{ marginTop: S.xl }}>
-        {tab === 'notes' && <ReadingText c={c} notes={session.notes || session.transcript} shlokas={shlokas} />}
-        {tab === 'roman' && <ReadingText c={c} notes={session.transliterated_notes || ''} shlokas={shlokas} roman />}
+        {tab === 'notes' && <ReadingText c={c} notes={session.notes || session.transcript} shlokas={shlokas} typeLabel={t('verseType')} />}
+        {tab === 'roman' && <ReadingText c={c} notes={session.transliterated_notes || ''} shlokas={shlokas} roman typeLabel={t('verseType')} />}
         {tab === 'verses' && (shlokas.length === 0
           ? <Text style={[T.body, { color: c.muted }]}>{t('noVerses')}</Text>
           : <View style={{ gap: S.m }}>{shlokas.map((s, i) => (
-              <VerseBlock key={i} c={c} text={s.text} original={s.original} type={s.type}
+              <VerseBlock key={i} c={c} text={s.text} original={s.original} type={t('verseType')(s.type)}
                 reference={s.reference ? `నాలాయిర దివ్య ప్రబంధం ${s.reference.number}` : null} />
             ))}</View>)}
       </View>
@@ -119,5 +119,5 @@ const st = StyleSheet.create({
   spot: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: S.m, paddingTop: S.m, gap: 4 },
   summary: { marginTop: S.xl, borderLeftWidth: 2, paddingLeft: S.l, paddingVertical: S.xs },
   tabs: { flexDirection: 'row', marginTop: S.xxl, borderWidth: StyleSheet.hairlineWidth, borderRadius: R.control, padding: 4 },
-  tab: { flex: 1, minHeight: 40, borderRadius: R.control - 2, borderWidth: 1, borderColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
+  tab: { flex: 1, minHeight: 44, borderRadius: R.control - 2, borderWidth: 1, borderColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
 });

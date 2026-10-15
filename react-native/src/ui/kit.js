@@ -217,7 +217,7 @@ export function VerseBlock({ c, text, original, reference, type }) {
 
 /** The notes: paragraphs of the verbatim transcript, verses where spoken. */
 const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
-export function ReadingText({ c, notes, shlokas = [], roman = false }) {
+export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel = (x) => x }) {
   const blocks = [];
   let para = [];
   const flush = () => { if (para.length) { blocks.push({ kind: 'p', text: para.join(' ') }); para = []; } };
@@ -228,7 +228,7 @@ export function ReadingText({ c, notes, shlokas = [], roman = false }) {
     if (m) {
       flush();
       const meta = shlokas.find((s) => (s.text || '').trim() === m[1].trim());
-      blocks.push({ kind: 'verse', text: m[1], original: m[2], type: meta?.type });
+      blocks.push({ kind: 'verse', text: m[1], original: m[2], type: typeLabel(meta?.type) });
     } else para.push(line.replace(/\*\*/g, ''));
   }
   flush();

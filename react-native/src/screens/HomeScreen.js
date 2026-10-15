@@ -82,7 +82,7 @@ export default function HomeScreen({ go, t, lang, setLang, upload }) {
         <View style={st.sectionHead}>
           <Overline c={c}>{t('recent')}</Overline>
           {sessions.length > 3 && (
-            <Pressable onPress={() => go('history')} hitSlop={10} accessibilityRole="link">
+            <Pressable onPress={() => go('history')} accessibilityRole="link" style={{ minHeight: 44, minWidth: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
               <Text style={[T.label, { color: c.brass }]}>{t('seeAll')}</Text>
             </Pressable>
           )}
