@@ -3,7 +3,7 @@
 
 export const STRINGS = {
   en: {
-    appName: 'Shravaṇam',
+    appName: 'SGKS Notes',
     tagline: 'Every word of the pravachanam, kept.',
     begin: 'Begin',
     greeting: 'Pravachanams',
@@ -69,7 +69,7 @@ export const STRINGS = {
     back: 'Back',
   },
   te: {
-    appName: 'శ్రవణం',
+    appName: 'SGKS Notes',
     tagline: 'ప్రవచనంలోని ప్రతి మాట — భద్రంగా.',
     begin: 'ప్రారంభించండి',
     greeting: 'ప్రవచనాలు',

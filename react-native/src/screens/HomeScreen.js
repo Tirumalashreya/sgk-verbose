@@ -40,7 +40,7 @@ export default function HomeScreen({ go, t, lang, setLang, upload }) {
       <Enter style={st.header}>
         <Portrait c={c} size={46} />
         <View style={{ flex: 1 }}>
-          <Text style={[lang === 'te' ? T.displayTe : T.title, { color: c.ink, fontSize: lang === 'te' ? 24 : 22 }]}>{t('appName')}</Text>
+          <Text style={[T.title, { color: c.ink, fontSize: 22 }]}>{t('appName')}</Text>
           <Text style={[{ fontFamily: F.read, fontSize: 12.5, lineHeight: 20 }, { color: c.muted }]} numberOfLines={1}>{lang === 'te' ? ACHARYA_TE : ACHARYA}</Text>
         </View>
         <Pressable onPress={() => setLang(lang === 'te' ? 'en' : 'te')} accessibilityRole="button"

@@ -70,5 +70,6 @@ export function useTheme(forceMode) {
 
 export const ACHARYA = 'Satluri Gopāla Krishnamāchārya';
 export const ACHARYA_TE = 'సత్లూరి గోపాల కృష్ణమాచార్య';   // spelling as already used in the app — confirm
+export const acharyaLogo = require('../assets/acharya.png');           // the app logo / icon photo
 export const acharyaPhoto = require('../assets/acharya_home.png');
 export const acharyaIntroPhoto = require('../assets/acharya_pravachanam.png');
