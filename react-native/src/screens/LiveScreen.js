@@ -10,11 +10,13 @@ import Waveform from '../ui/Waveform';
 import Kolam from '../ui/Kolam';
 import { createWebSocket, startLive, stopSession, uploadAudio, startSession, getSessions } from '../services/api';
 import { useMinuteRecorder } from '../services/useMinuteRecorder';
-import { notify, isWeb } from '../services/platform';
+import { notify, choose, isWeb } from '../services/platform';
 
 const c = palettes.manuscript;
 const STAGES = ['transcription', 'correction', 'shloka_detector', 'knowledge_structurer', 'formatting', 'validation', 'memory'];
 const isTe = (s) => /[ఀ-౿]/.test(s || '');
+const CONTINUE_WINDOW_MS = 15 * 60 * 1000;   // pressing Record soon after Stop offers to continue
+const utc = (iso) => Date.parse(/Z|[+-]\d\d:\d\d$/.test(iso || '') ? iso : `${iso}Z`);
 const fmt = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const audioType = (uri) => (isWeb || /\.webm/i.test(uri) ? 'audio/webm' : /\.(m4a|mp4|aac)/i.test(uri) ? 'audio/mp4' : /\.wav/i.test(uri) ? 'audio/wav' : 'audio/mpeg');
 
@@ -120,7 +122,13 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
   const startRecording = async () => {
     try {
       pieces.current = 0; setPreview([]); setError('');
-      await startLive();
+      // A recording stopped a few minutes ago is probably the same pravachanam
+      let continueId = null;
+      const last = ((await getSessions().catch(() => ({}))).sessions || [])
+        .filter((s) => (s.live || s.pieces_recorded) && Date.now() - utc(s.stopped_at || s.created_at) < CONTINUE_WINDOW_MS)
+        .pop();
+      if (last && await choose(t('continueTitle'), t('continueHint')(last.title), t('continueYes'), t('continueNo'))) continueId = last.id;
+      await startLive(continueId);
       await recorder.start();
       startedAt.current = Date.now(); setElapsed(0);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});

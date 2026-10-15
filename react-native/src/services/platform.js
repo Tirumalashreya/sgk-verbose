@@ -24,6 +24,16 @@ export function confirm(title, message, confirmLabel = 'Delete') {
     ], { cancelable: true, onDismiss: () => resolve(false) }));
 }
 
+/** Ask between two choices. Resolves true for `yesLabel`, false for `noLabel`. */
+export function choose(title, message, yesLabel, noLabel) {
+  if (isWeb) return Promise.resolve(window.confirm(`${title}\n\n${message}\n\nOK — ${yesLabel}\nCancel — ${noLabel}`));
+  return new Promise((resolve) =>
+    Alert.alert(title, message, [
+      { text: noLabel, onPress: () => resolve(false) },
+      { text: yesLabel, style: 'default', onPress: () => resolve(true) },
+    ], { cancelable: true, onDismiss: () => resolve(false) }));
+}
+
 export function notify(title, message) {
   if (isWeb) window.alert(`${title}\n\n${message}`);
   else Alert.alert(title, message);

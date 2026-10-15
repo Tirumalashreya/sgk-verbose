@@ -36,8 +36,12 @@ export const searchRag = async (query) => {
   return res.json();
 };
 
-export const startLive = async () => {
-  const res = await fetch(`${API_BASE}/start-live`, { method: 'POST' });
+/** Start recording; with continueId the new minutes are added to that earlier recording. */
+export const startLive = async (continueId) => {
+  const res = await fetch(`${API_BASE}/start-live`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ continue_id: continueId || null }),
+  });
   return res.json();
 };
 

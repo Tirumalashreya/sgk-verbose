@@ -99,6 +99,7 @@ _live_session_id: int = 0
 _pipeline_semaphore = threading.Semaphore(1)  # one pipeline at a time — Ollama is single-threaded
 _live_recording_session: dict | None = None   # the mic recording currently being captured
 _live_lock = threading.Lock()                 # guards each live session's "pending" piece count
+_live_by_id: dict[str, dict] = {}            # mic recordings made since start-up, by id (for "continue")
 _active_upload_hashes: set[str] = set()  # uploads queued or processing — identical re-uploads are ignored
 
 
@@ -145,16 +146,48 @@ async def stop_session():
     if session is not None:
         with _live_lock:
             session["stopped"] = True
+            session["stopped_at"] = datetime.utcnow().isoformat()
             ready = session["pending"] == 0
+        for stored in sessions_store:          # so the app can offer "continue" right away
+            if stored.get("id") == session["id"]:
+                stored["stopped_at"] = session["stopped_at"]
         if ready:
             threading.Thread(target=_finalize_live_session, args=(session,), daemon=True).start()
     return {"status": "stopped"}
 
 
+class StartLiveRequest(BaseModel):
+    continue_id: str | None = None   # add to this earlier recording instead of starting new notes
+
+
 @app.post("/start-live")
-async def start_live():
+async def start_live(data: StartLiveRequest | None = None):
     global _live_recording_session, _live_session_id
     _live_session_id += 1
+    continue_id = data.continue_id if data else None
+    if continue_id in _live_by_id:
+        # Still in memory (maybe still finishing): reopen it; its next stop rebuilds the notes over everything
+        session = _live_by_id[continue_id]
+        with _live_lock:
+            session["stopped"] = False
+        _live_recording_session = session
+        return {"status": "ok", "continued": continue_id}
+    earlier = next((s for s in sessions_store if continue_id and s.get("id") == continue_id), None)
+    if earlier is not None:
+        # Continue: same notes, same id; the new minutes are appended to its transcript
+        _live_recording_session = {
+            **{k: earlier.get(k) for k in ("id", "type", "title", "created_at", "notes", "enhanced_notes",
+                                            "transliterated_notes", "summary", "asr_provider")},
+            "transcript": earlier.get("transcript") or "",
+            "raw_transcript": earlier.get("raw_transcript") or earlier.get("transcript") or "",
+            "shlokas": earlier.get("shlokas") or [], "segments": earlier.get("segments") or [],
+            "prefix": {k: earlier.get(k) for k in ("transcript", "raw_transcript", "notes",
+                                                    "transliterated_notes", "shlokas")},
+            "prior_pieces": int(earlier.get("pieces_recorded") or 1),
+            "pieces": [], "pending": 0, "stopped": False, "live": True,
+        }
+        _live_by_id[earlier["id"]] = _live_recording_session
+        return {"status": "ok", "continued": earlier["id"]}
     _live_recording_session = {
         "id": str(uuid.uuid4()),
         "type": "chunk_complete",
@@ -165,7 +198,9 @@ async def start_live():
         "pieces": [],          # per-minute results, in recording order (preview only)
         "pending": 0,          # pieces uploaded but not yet processed
         "stopped": False,
+        "live": True,
     }
+    _live_by_id[_live_recording_session["id"]] = _live_recording_session
     return {"status": "ok"}
 
 
@@ -363,7 +398,7 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
             piece = len(session["pieces"])
             session["pieces"].append(None)
             session["pending"] += 1
-        audio_path = f"audio_input/live_{session['id'][:8]}_{piece}{ext}"
+        audio_path = f"audio_input/live_{session['id'][:8]}_{session.get('prior_pieces', 0) + piece}{ext}"
         with open(audio_path, "wb") as f:
             f.write(content)
         background_tasks.add_task(run_live_piece, session, piece, audio_path, digest)
@@ -408,7 +443,7 @@ def run_live_piece(session: dict, piece: int, audio_path: str, digest: str):
         with _pipeline_semaphore:
             result = _run_graph(_new_state(audio_path=audio_path, chunk_index=piece, live_piece=True), piece)
         session["pieces"][piece] = result
-        done = [p for p in session["pieces"] if p]
+        done = [p for p in [session.get("prefix")] + session["pieces"] if p]
         session["transcript"] = "\n".join(p.get("transcript") or "" for p in done).strip()
         session["raw_transcript"] = "\n".join(p.get("raw_transcript") or p.get("transcript") or "" for p in done).strip()
         session["notes"] = "\n\n".join(p.get("notes") or "" for p in done).strip()
@@ -433,7 +468,7 @@ def run_live_piece(session: dict, piece: int, audio_path: str, digest: str):
 
 def _stored(session: dict) -> dict:
     """What gets saved: everything except the in-memory bookkeeping."""
-    return {k: v for k, v in session.items() if k not in ("pieces", "pending", "stopped")}
+    return {k: v for k, v in session.items() if k not in ("pieces", "pending", "stopped", "prefix", "prior_pieces")}
 
 
 def _save_live_preview(session: dict):
@@ -466,7 +501,8 @@ def _finalize_live_session(session: dict):
         final = _session_from_result({**result, "transcript": transcript}, session["title"], 0,
                                      raw_transcript=session.get("raw_transcript"),
                                      asr_provider=session.get("asr_provider"),
-                                     pieces_recorded=len(pieces))
+                                     pieces_recorded=session.get("prior_pieces", 0) + len(pieces),
+                                     stopped_at=session.get("stopped_at"), live=True)
         final["id"], final["created_at"] = session["id"], session["created_at"]
         for i, s in enumerate(sessions_store):
             if s.get("id") == session["id"]:
@@ -479,6 +515,54 @@ def _finalize_live_session(session: dict):
         print("[live] recording finalized")
     except Exception as e:
         _report_failure(e, 0)
+
+
+class MergeRequest(BaseModel):
+    ids: list[str]
+
+
+@app.post("/merge-sessions")
+async def merge_sessions(data: MergeRequest):
+    """Join several recordings of one pravachanam into one set of notes, in the
+    order they were recorded. The earliest keeps its id and title."""
+    from fastapi import HTTPException
+    found = sorted((s for s in sessions_store if s.get("id") in set(data.ids)), key=lambda s: s.get("created_at") or "")
+    if len(found) < 2 or len(found) != len(set(data.ids)):
+        raise HTTPException(status_code=400, detail="Need at least two existing sessions")
+    threading.Thread(target=_merge_sessions, args=(found,), daemon=True).start()
+    return {"status": "merging", "into": found[0]["id"]}
+
+
+def _merge_sessions(found: list[dict]):
+    global sessions_store
+    first = found[0]
+    transcript = "\n".join((s.get("transcript") or "").strip() for s in found).strip()
+    raw = "\n".join((s.get("raw_transcript") or s.get("transcript") or "").strip() for s in found).strip()
+    print(f"[merge] joining {len(found)} recordings ({len(transcript)} chars) into one set of notes...")
+    try:
+        with _pipeline_semaphore:
+            result = _run_text_steps(transcript, 0, f"live:{first['id']}")
+        merged = _session_from_result({**result, "transcript": transcript}, first.get("title"), 0,
+                                      raw_transcript=raw, asr_provider=first.get("asr_provider"),
+                                      pieces_recorded=sum(int(s.get("pieces_recorded") or 1) for s in found),
+                                      stopped_at=found[-1].get("stopped_at"), live=True)
+        merged["id"], merged["created_at"] = first["id"], first["created_at"]
+        gone = {s["id"] for s in found[1:]}
+        _forget_memory([f"live:{i}" for i in gone])
+        sessions_store = [merged if s.get("id") == first["id"] else s for s in sessions_store if s.get("id") not in gone]
+        _save_sessions()
+        _broadcast({"type": "session_complete", "session_id": first["id"]})
+        print("[merge] done")
+    except Exception as e:
+        _report_failure(e, 0)
+
+
+def _forget_memory(sources: list[str]):
+    """Drop search entries of recordings that no longer exist on their own."""
+    import chromadb
+    collection = chromadb.PersistentClient(path="chroma_db").get_or_create_collection(name="notes_collection")
+    for source in sources:
+        collection.delete(where={"source": source})
 
 
 def run_pipeline(youtube_url: str):

@@ -35,6 +35,10 @@ export const STRINGS = {
     uploadFailed: 'Could not process',
     noNeedAgain: 'No need to upload again',
     liveIdleTitle: 'Live pravachanam',
+    continueTitle: 'Continue the previous recording?',
+    continueHint: (title) => `"${title}" stopped a few minutes ago. Continue adds to the same notes; New starts separate notes.`,
+    continueYes: 'Continue',
+    continueNo: 'New recording',
     liveIdleHint: 'Place the phone near the speaker. Notes are built for the whole recording when you stop.',
     stages: {
       listener: 'Preparing', transcription: 'Listening', correction: 'Names',
@@ -100,6 +104,10 @@ export const STRINGS = {
     uploadFailed: 'ప్రాసెస్ చేయలేకపోయాం',
     noNeedAgain: 'మళ్ళీ అప్‌లోడ్ చేయనవసరం లేదు',
     liveIdleTitle: 'ప్రత్యక్ష ప్రవచనం',
+    continueTitle: 'మునుపటి రికార్డింగ్ కొనసాగించాలా?',
+    continueHint: (title) => `"${title}" కొద్ది నిమిషాల క్రితం ఆగింది. కొనసాగిస్తే అదే నోట్స్‌లో చేరుతుంది; కొత్తది అయితే వేరే నోట్స్ వస్తాయి.`,
+    continueYes: 'కొనసాగించు',
+    continueNo: 'కొత్త రికార్డింగ్',
     liveIdleHint: 'ఫోన్‌ను వక్తకు దగ్గరగా ఉంచండి. ఆపినప్పుడు మొత్తం రికార్డింగ్‌కు నోట్స్ తయారవుతాయి.',
     stages: {
       listener: 'సిద్ధం', transcription: 'వింటోంది', correction: 'పేర్లు',
