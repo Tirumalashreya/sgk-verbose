@@ -1,138 +1,68 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert } from 'react-native';
-import { C, F } from '../theme';
+// History — every pravachanam, searchable; delete with confirmation.
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, TextInput, Pressable, RefreshControl, StyleSheet } from 'react-native';
+import { useTheme, F, T, S, R } from '../theme';
+import { Screen, Enter, SessionRow, Overline } from '../ui/kit';
+import Icon from '../ui/Icon';
 import { getSessions, deleteSession } from '../services/api';
+import { confirm } from '../services/platform';
 
-export default function HistoryScreen({ go, lang }) {
+export default function HistoryScreen({ go, t, lang }) {
+  const c = useTheme();
   const [sessions, setSessions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadSessions = () => {
-    getSessions()
-      .then(data => setSessions(
-        (data.sessions || [])
-          .filter(s => s.notes || s.transcript)
-          .slice().reverse()
-      ))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    try { setSessions(((await getSessions()).sessions || []).slice().reverse()); } catch {}
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? sessions.filter((s) => (s.title || '').toLowerCase().includes(q)) : sessions;
+  }, [sessions, query]);
+
+  const remove = async (s) => {
+    if (!(await confirm(s.title || 'Pravachanam', t('deleteConfirm'), t('delete')))) return;
+    try { await deleteSession(s.id); setSessions((l) => l.filter((x) => x.id !== s.id)); } catch {}
   };
-
-  useEffect(() => { loadSessions(); }, []);
-
-  const handleDelete = (session, e) => {
-    e.stopPropagation();
-    const id = session.id;
-    if (!id) return;
-    if (typeof window !== 'undefined') {
-      if (!window.confirm('Delete this recording?')) return;
-      deleteSession(id).then(loadSessions).catch(() => {});
-    } else {
-      Alert.alert('Delete', 'Delete this recording?', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteSession(id).then(loadSessions).catch(() => {}) },
-      ]);
-    }
-  };
-
-  if (loading) {
-    return (
-      <View style={{ flex: 1, backgroundColor: C.paper, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator color={C.maroon} />
-      </View>
-    );
-  }
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: C.paper }}
-      contentContainerStyle={{ padding: 22, paddingBottom: 100 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <Text style={{ fontFamily: F.serif, fontSize: 26, color: C.ink, marginBottom: 4 }}>History</Text>
-      <Text style={{ fontSize: 13, color: C.muted, marginBottom: 24 }}>
-        {sessions.length} pravachanam{sessions.length !== 1 ? 's' : ''} recorded
-      </Text>
+    <Screen c={c}
+      refreshControl={<RefreshControl refreshing={refreshing} tintColor={c.brass}
+        onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}>
+      <Enter>
+        <Text style={[lang === 'te' ? T.displayTe : T.display, { color: c.ink }]}>{t('history')}</Text>
+        <Text style={[T.body, { color: c.muted, marginTop: 4 }]}>{sessions.length}</Text>
+      </Enter>
 
-      {sessions.length === 0 && (
-        <View style={{ alignItems: 'center', marginTop: 60 }}>
-          <Text style={{ fontSize: 36, marginBottom: 14 }}>🪷</Text>
-          <Text style={{ fontFamily: F.serif, fontSize: 16, color: C.muted, textAlign: 'center' }}>
-            No recordings yet.{'\n'}Paste a link or record live to begin.
-          </Text>
-          <Pressable
-            onPress={() => go('library')}
-            style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 99, backgroundColor: C.maroon }}
-          >
-            <Text style={{ color: '#fff', fontFamily: F.sansSemi, fontSize: 14 }}>Go to Home</Text>
-          </Pressable>
-        </View>
-      )}
+      <View style={[st.search, { borderColor: c.line, backgroundColor: c.surface }]}>
+        <Icon name="search" size={18} color={c.muted} />
+        <TextInput value={query} onChangeText={setQuery} placeholder={t('search')} placeholderTextColor={c.muted}
+          style={[T.body, { flex: 1, color: c.ink, minHeight: 44 }]} accessibilityLabel={t('search')} returnKeyType="search" />
+      </View>
 
-      {sessions.map((session, i) => (
-        <Pressable
-          key={i}
-          onPress={() => go('discourse', { session })}
-          style={{
-            borderRadius: 18, backgroundColor: C.card,
-            borderWidth: 1, borderColor: C.lineSoft,
-            padding: 18, marginBottom: 14,
-          }}
-        >
-          {/* Title row */}
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-            <View style={{ flex: 1, marginRight: 10 }}>
-              <Text style={{ fontFamily: F.serif, fontSize: 17, color: C.ink }} numberOfLines={2}>
-                {session.title || `Pravachanam ${sessions.length - i}`}
-              </Text>
-              {session.created_at && (
-                <Text style={{ fontSize: 11, color: C.gold, marginTop: 3 }}>
-                  {new Date(session.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                </Text>
-              )}
+      <View style={{ marginTop: S.l }}>
+        {shown.length === 0 && <Text style={[T.body, { color: c.muted, paddingVertical: S.xl }]}>{t('emptyLibrary')}</Text>}
+        {shown.map((s, i) => (
+          <View key={s.id || i} style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ flex: 1 }}>
+              <SessionRow c={c} t={t} session={s} divider={i < shown.length - 1}
+                onPress={() => go('reading', { session: s })} onLongPress={() => remove(s)} />
             </View>
-            <View style={{ alignItems: 'flex-end', gap: 6 }}>
-              <Text style={{ fontSize: 11, color: C.gold, fontFamily: F.sansSemi }}>
-                {(session.shlokas || []).length} shlokas
-              </Text>
-              <Text style={{ fontSize: 10, color: C.faint }}>
-                {(session.segments || []).length} segments
-              </Text>
-              <Pressable
-                onPress={(e) => handleDelete(session, e)}
-                style={{ marginTop: 2, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: 'rgba(180,30,30,0.08)', borderWidth: 1, borderColor: 'rgba(180,30,30,0.18)' }}
-              >
-                <Text style={{ fontSize: 11, color: '#b01e1e', fontFamily: F.sansSemi }}>Delete</Text>
-              </Pressable>
-            </View>
+            <Pressable onPress={() => remove(s)} accessibilityRole="button" accessibilityLabel={`${t('delete')} ${s.title || ''}`}
+              hitSlop={6} style={st.del}>
+              <Icon name="trash" size={19} color={c.kumkumText} />
+            </Pressable>
           </View>
-
-          {/* Summary */}
-          {session.summary ? (
-            <Text style={{ fontSize: 13, color: C.inkSoft, lineHeight: 20, marginTop: 10 }} numberOfLines={2}>
-              {session.summary}
-            </Text>
-          ) : null}
-
-          {/* Tags */}
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-            {(session.segments || [])
-              .map(s => s.label)
-              .filter((v, idx, a) => a.indexOf(v) === idx)
-              .map((label, j) => (
-                <View key={j} style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 99, backgroundColor: 'rgba(122,46,37,0.08)', borderWidth: 1, borderColor: 'rgba(122,46,37,0.15)' }}>
-                  <Text style={{ fontSize: 11, color: C.maroon, fontFamily: F.sansSemi }}>{label}</Text>
-                </View>
-              ))}
-          </View>
-
-          {/* Open arrow */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 6 }}>
-            <Text style={{ fontSize: 12, color: C.saffron, fontFamily: F.sansSemi }}>View Transcript & Notes</Text>
-            <Text style={{ color: C.saffron, fontSize: 14 }}>›</Text>
-          </View>
-        </Pressable>
-      ))}
-    </ScrollView>
+        ))}
+      </View>
+    </Screen>
   );
 }
+
+const st = StyleSheet.create({
+  search: { flexDirection: 'row', alignItems: 'center', gap: S.s, borderWidth: StyleSheet.hairlineWidth, borderRadius: R.control, paddingHorizontal: S.m, marginTop: S.xl },
+  del: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+});

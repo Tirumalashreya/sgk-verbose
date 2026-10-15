@@ -1,106 +1,70 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
-import { C, F } from '../theme';
-import { SUGGESTIONS, ANSWERS } from '../data';
+// Ask — finds the passage in the pravachanams where something was said (search
+// over the stored notes). Honest: shows what was found, nothing invented.
+import React, { useState } from 'react';
+import { View, Text, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { useTheme, F, T, S, R } from '../theme';
+import { Screen, Enter, Button, Overline } from '../ui/kit';
+import { searchRag } from '../services/api';
 
-export default function AskScreen({ go, t, lang }) {
-  const insets = useSafeAreaInsets();
-  const [messages, setMessages] = useState([]);
-  const [typing, setTyping] = useState(false);
-  const scRef = useRef(null);
-  const sugLabel = (s) => (lang === 'te' ? s.te : s.label);
+const isTe = (s) => /[ఀ-౿]/.test(s || '');
 
-  const ask = (id, label) => {
-    setMessages((m) => [...m, { role: 'user', text: label }]);
-    setTyping(true);
-    setTimeout(() => {
-      setMessages((m) => [...m, ANSWERS[id]]);
-      setTyping(false);
-    }, 1500);
+export default function AskScreen({ t, lang }) {
+  const c = useTheme();
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState([]);   // [{ question, passage }]
+
+  const ask = async () => {
+    const question = q.trim();
+    if (!question || busy) return;
+    setBusy(true);
+    try {
+      const { result } = await searchRag(question);
+      const found = result && !/^No relevant information/i.test(result);
+      setResults((r) => [{ question, passage: found ? result : null }, ...r]);
+      setQ('');
+    } catch {
+      setResults((r) => [{ question, passage: null }, ...r]);
+    } finally { setBusy(false); }
   };
 
-  const empty = messages.length === 0 && !typing;
-
   return (
-    <View style={{ flex: 1, backgroundColor: C.paper }}>
-      <View style={{ paddingTop: insets.top + 6, paddingHorizontal: 22, flexDirection: 'row', alignItems: 'center', paddingBottom: 12 }}>
-        <Pressable onPress={() => go('library')} style={{ marginRight: 10 }}><Text style={{ fontSize: 26, color: C.maroon }}>‹</Text></Pressable>
-        <View>
-          <Text style={{ fontFamily: F.serif, fontSize: 21, color: C.ink }}>{t('askTitle')}</Text>
-          <Text style={{ fontSize: 11.5, color: C.muted, marginTop: 3 }}>{t('askSub')}</Text>
-        </View>
+    <Screen c={c}>
+      <Enter>
+        <Text style={[lang === 'te' ? T.displayTe : T.display, { color: c.ink }]}>{t('askTitle')}</Text>
+        <Text style={[isTe(t('askHint')) ? { fontFamily: F.read, fontSize: 15, lineHeight: 26 } : T.body, { color: c.inkSoft, marginTop: S.s }]}>{t('askHint')}</Text>
+      </Enter>
+
+      <View style={[st.box, { borderColor: c.brass, backgroundColor: c.surface }]}>
+        <TextInput value={q} onChangeText={setQ} placeholder={t('askPlaceholder')} placeholderTextColor={c.muted}
+          multiline style={[isTe(q) ? { fontFamily: F.read, fontSize: 16, lineHeight: 28 } : T.body, st.input, { color: c.ink }]}
+          accessibilityLabel={t('askTitle')} onSubmitEditing={ask} blurOnSubmit returnKeyType="search" />
+        <Button c={c} variant="brass" icon="search" label={t('ask')} onPress={ask} disabled={!q.trim() || busy} />
       </View>
 
-      <ScrollView
-        ref={scRef}
-        onContentSizeChange={() => scRef.current?.scrollToEnd({ animated: true })}
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 16 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {empty && (
-          <View style={{ marginTop: 10 }}>
-            <View style={{ width: 74, height: 74, alignSelf: 'center', marginVertical: 16, alignItems: 'center', justifyContent: 'center' }}>
-              <View style={{ position: 'absolute', width: 74, height: 74, borderRadius: 37, borderWidth: 1, borderColor: '#cdb27a' }} />
-              <View style={{ position: 'absolute', width: 56, height: 56, borderRadius: 28, borderWidth: 1, borderColor: '#e0cb98' }} />
-              <Text style={{ fontFamily: F.dev, fontSize: 26, color: C.maroon }}>ॐ</Text>
-            </View>
-            <Text style={{ textAlign: 'center', fontSize: 13.5, color: C.inkSoft, lineHeight: 21, maxWidth: 260, alignSelf: 'center', marginBottom: 22 }}>
-              {t('askEmpty')}
-            </Text>
-            <Text style={{ fontSize: 11, letterSpacing: 1, color: C.gold, marginBottom: 10 }}>{t('tryAsking')}</Text>
-            {SUGGESTIONS.map((s) => (
-              <Pressable key={s.id} onPress={() => ask(s.id, sugLabel(s))} style={{ padding: 14, borderRadius: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, marginBottom: 10 }}>
-                <Text style={{ fontSize: 14, color: C.ink }}>{sugLabel(s)}</Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
+      {busy && <ActivityIndicator color={c.brass} style={{ marginTop: S.xl }} />}
 
-        {messages.map((m, i) =>
-          m.role === 'user' ? (
-            <LinearGradient key={i} colors={['#7a2e25', '#601f18']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ alignSelf: 'flex-end', maxWidth: '80%', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 18, borderBottomRightRadius: 4, marginBottom: 14 }}>
-              <Text style={{ color: C.cream, fontSize: 14, lineHeight: 21 }}>{m.text}</Text>
-            </LinearGradient>
-          ) : (
-            <View key={i} style={{ alignSelf: 'flex-start', maxWidth: '90%', marginBottom: 14 }}>
-              <Text style={{ fontSize: 14, lineHeight: 23, color: C.ink }}>{m.text}</Text>
-              {m.shloka && (
-                <View style={{ borderRadius: 14, padding: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, marginTop: 10 }}>
-                  <Text style={{ fontSize: 10, letterSpacing: 1.5, color: C.gold, marginBottom: 7 }}>{m.shloka.ref.toUpperCase()}</Text>
-                  <Text style={{ fontFamily: F.dev, fontSize: 15.5, lineHeight: 28, color: C.maroon }}>{m.shloka.dev}</Text>
-                  <Text style={{ fontSize: 11.5, color: '#a8924f', fontStyle: 'italic', marginTop: 6 }}>{m.shloka.translit}</Text>
-                </View>
-              )}
-              <Pressable onPress={() => go('discourse')} style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginTop: 10, paddingVertical: 7, paddingHorizontal: 12, borderRadius: 99, backgroundColor: '#f1e6cf', borderWidth: 1, borderColor: '#e0cb98' }}>
-                <View style={{ width: 5, height: 5, backgroundColor: C.saffron, marginRight: 7, transform: [{ rotate: '45deg' }] }} />
-                <Text style={{ fontSize: 11.5, color: C.maroon }}>{m.cite}</Text>
-              </Pressable>
-            </View>
-          )
-        )}
-
-        {typing && (
-          <View style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 18, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, marginBottom: 14 }}>
-            <ActivityIndicator size="small" color={C.goldSoft} />
-            <Text style={{ fontSize: 12, color: C.muted, marginLeft: 8 }}>{t('searching')}</Text>
-          </View>
-        )}
-      </ScrollView>
-
-      {/* input */}
-      <View style={{ paddingHorizontal: 18, paddingTop: 10, paddingBottom: insets.bottom + 14, backgroundColor: C.paper }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 18, paddingRight: 8, paddingVertical: 8, borderRadius: 99, backgroundColor: C.card, borderWidth: 1, borderColor: '#e0cb98' }}>
-          <Text style={{ flex: 1, fontSize: 14, color: '#a99c80' }}>{t('askPlaceholder')}</Text>
-          <Pressable onPress={() => ask('dharma', sugLabel(SUGGESTIONS[0]))}>
-            <LinearGradient colors={['#e0843b', '#c25a26']} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ color: '#fff4e2', fontSize: 16 }}>↑</Text>
-            </LinearGradient>
-          </Pressable>
-        </View>
+      <View style={{ marginTop: S.xl, gap: S.xl }}>
+        {results.map((r, i) => (
+          <Enter key={results.length - i}>
+            <Text style={[isTe(r.question) ? T.titleTe : T.title, { color: c.ink, fontSize: 18 }]}>{r.question}</Text>
+            {r.passage ? (
+              <View style={[st.passage, { borderLeftColor: c.brass }]}>
+                <Overline c={c}>{t('fromNotes')}</Overline>
+                <Text selectable style={[T.read, { color: c.ink, marginTop: S.s }]}>{r.passage}</Text>
+              </View>
+            ) : (
+              <Text style={[T.body, { color: c.muted, marginTop: S.s }]}>{t('askNothing')}</Text>
+            )}
+          </Enter>
+        ))}
       </View>
-    </View>
+    </Screen>
   );
 }
+
+const st = StyleSheet.create({
+  box: { marginTop: S.xl, borderWidth: 1, borderRadius: R.panel, padding: S.m, gap: S.m },
+  input: { minHeight: 64, textAlignVertical: 'top', paddingHorizontal: S.s, paddingTop: S.s },
+  passage: { borderLeftWidth: 2, paddingLeft: S.l, marginTop: S.m },
+});
