@@ -201,7 +201,7 @@ const st = StyleSheet.create({
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.s },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   stages: { width: '100%', maxWidth: 560, alignSelf: 'center', paddingHorizontal: S.l, paddingBottom: S.xl },
-  preview: { maxHeight: 190, marginHorizontal: S.l, borderRadius: R.panel, backgroundColor: 'rgba(28,21,16,0.72)' },
+  preview: { maxHeight: 190, marginHorizontal: S.l, borderRadius: R.panel, backgroundColor: 'rgba(23,19,45,0.72)' },
   controls: { alignItems: 'center', paddingTop: S.l },
   error: { marginTop: S.l, borderWidth: 1, borderRadius: R.control, padding: S.m, maxWidth: 420 },
 });

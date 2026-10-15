@@ -1,7 +1,7 @@
-# DESIGN.md — Shravaṇam visual system
+# DESIGN.md — SGKS Notes visual system
 
-Direction: **rich & immersive, temple at dusk.** The experience should feel like sitting in a
-lamp-lit hall: deep warm darkness, brass and kumkum, a living flame — then, when reading, calm
+Direction: **rich & immersive, the pravachanam stage.** The colours come from the intro photo:
+indigo velvet behind the Acharya, marigold gold of the garland, the maroon cloth, cream — then, when reading, calm
 and clear like a well-printed palm-leaf manuscript. Tokens live in `src/theme.js`; this file is
 the contract they implement.
 
@@ -16,20 +16,20 @@ the contract they implement.
 ## 2. Colour (tinted — no pure black, no pure white)
 | Token | Hall (dark) | Manuscript (light) | Use |
 |---|---|---|---|
-| `bg` | `#120D09` night-teak | `#F6EEDD` palm leaf | screen background |
-| `surface` | `#1C1510` | `#FBF5E9` | panels, list rows |
-| `raised` | `#271D15` | `#FFFDF7` | the one elevated element per screen |
-| `ink` | `#F2E7D3` ivory | `#2A1F14` lamp-black | primary text |
-| `inkSoft` | `#CDBEA2` | `#4E4131` | secondary text |
-| `muted` | `#9C8B6E` | `#6E604A` | captions (≥4.5:1 on its bg) |
-| `line` | `#3A2C20` | `#E2D3B4` | hairlines |
-| `brass` | `#D9A84E` | `#8C6420` | accents, focus, selected |
-| `brassBright` | `#F3C672` | `#B07D24` | flame highlight, active state |
-| `kumkum` | `#B03A2B` | `#9A2A1C` | fill for the primary action (Record), destructive |
-| `kumkumText` | `#E86A57` | `#9A2A1C` | red *text* (e.g. a Delete label) |
-| `turmeric` | `#E9922E` | `#B8641A` | progress, live indicators |
-| `leaf` | `#7FB08A` | `#2F6B3F` | verified / done |
-| `review` | `#E6B450` | `#8A5A00` | needs-review badges |
+| `bg` | `#0E0B1F` indigo velvet | `#F6EEDD` palm leaf | screen background |
+| `surface` | `#17132D` | `#FBF5E9` | panels, list rows |
+| `raised` | `#211C3D` | `#FFFDF7` | the one elevated element per screen |
+| `ink` | `#F5ECDF` cream | `#2A1F14` lamp-black | primary text |
+| `inkSoft` | `#D8CCBC` | `#4E4131` | secondary text |
+| `muted` | `#A39AB8` | `#6E604A` | captions (≥4.5:1 on its bg) |
+| `line` | `#332C52` | `#E2D3B4` | hairlines |
+| `brass` | `#E3B35C` marigold | `#8C6420` | accents, focus, selected |
+| `brassBright` | `#F2C877` | `#B07D24` | flame highlight, active state |
+| `kumkum` | `#8E1E3A` maroon | `#861C36` | fill for the primary action (Record), destructive |
+| `kumkumText` | `#F08A9C` lotus | `#861C36` | red *text* (e.g. a Delete label) |
+| `turmeric` | `#EE9A3A` | `#B8641A` | progress, live indicators |
+| `leaf` | `#88C49C` | `#2F6B3F` | verified / done |
+| `review` | `#EAC060` | `#8A5A00` | needs-review badges |
 
 Rules: text on a coloured fill uses `ink` of the *opposite* mode (never grey on colour).
 `turmeric` is for bars/dots only, never text. Every text/background pair above meets WCAG AA

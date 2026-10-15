@@ -2,17 +2,18 @@
 import { useColorScheme } from 'react-native';
 
 export const palettes = {
-  // Hall: lamp-lit temple at dusk (Intro, Live, and reading in dark mode)
+  // Hall: the pravachanam stage — indigo velvet, marigold gold, maroon cloth,
+  // cream (Intro, Live, and reading in dark mode). Taken from the intro photo.
   hall: {
     mode: 'hall',
-    bg: '#120D09', surface: '#1C1510', raised: '#271D15',
-    ink: '#F2E7D3', inkSoft: '#CDBEA2', muted: '#9C8B6E', line: '#3A2C20',
-    brass: '#D9A84E', brassBright: '#F3C672',
-    kumkum: '#B03A2B', kumkumDeep: '#7E2418', kumkumText: '#E86A57',
-    turmeric: '#E9922E', leaf: '#7FB08A', review: '#E6B450',
-    onFill: '#F2E7D3',          // text on kumkum / dark fills
-    onBrass: '#120D09',         // text on brass fills
-    kolam: 'rgba(217,168,78,0.07)',
+    bg: '#0E0B1F', surface: '#17132D', raised: '#211C3D',
+    ink: '#F5ECDF', inkSoft: '#D8CCBC', muted: '#A39AB8', line: '#332C52',
+    brass: '#E3B35C', brassBright: '#F2C877',
+    kumkum: '#8E1E3A', kumkumDeep: '#5E1226', kumkumText: '#F08A9C',
+    turmeric: '#EE9A3A', leaf: '#88C49C', review: '#EAC060',
+    onFill: '#F5ECDF',          // text on maroon / dark fills
+    onBrass: '#0E0B1F',         // text on gold fills
+    kolam: 'rgba(227,179,92,0.07)',
   },
   // Manuscript: palm-leaf paper for reading by day
   manuscript: {
@@ -20,7 +21,7 @@ export const palettes = {
     bg: '#F6EEDD', surface: '#FBF5E9', raised: '#FFFDF7',
     ink: '#2A1F14', inkSoft: '#4E4131', muted: '#6E604A', line: '#E2D3B4',
     brass: '#8C6420', brassBright: '#B07D24',
-    kumkum: '#9A2A1C', kumkumDeep: '#6E1D13', kumkumText: '#9A2A1C',
+    kumkum: '#861C36', kumkumDeep: '#5E1226', kumkumText: '#861C36',
     turmeric: '#B8641A', leaf: '#2F6B3F', review: '#8A5A00',
     onFill: '#F6EEDD',
     onBrass: '#FFFDF7',
@@ -69,7 +70,7 @@ export function useTheme(forceMode) {
 }
 
 export const ACHARYA = 'Satluri Gopāla Krishnamāchārya';
-export const ACHARYA_TE = 'సత్లూరి గోపాల కృష్ణమాచార్య';   // spelling as already used in the app — confirm
+export const ACHARYA_TE = 'సాత్లూరి గోపాల కృష్ణమాచార్య';
 export const acharyaLogo = require('../assets/acharya.png');           // the app logo / icon photo
 export const acharyaPhoto = require('../assets/acharya_home.png');
 export const acharyaIntroPhoto = require('../assets/acharya_pravachanam.png');

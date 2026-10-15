@@ -16,7 +16,7 @@ export default function IntroScreen({ onDone, t }) {
     <View style={st.page}>
       <CoverImage source={acharyaIntroPhoto} size={{ width: 1280, height: 854 }} focus={{ x: 0.48, y: 0.3 }} accessibilityLabel={ACHARYA} />
       {/* darken only the lower part so the text reads over the photo */}
-      <LinearGradient colors={['rgba(18,13,9,0)', 'rgba(18,13,9,0.55)', 'rgba(18,13,9,0.94)', c.bg]}
+      <LinearGradient colors={['rgba(14,11,31,0)', 'rgba(14,11,31,0.55)', 'rgba(14,11,31,0.94)', c.bg]}
         locations={[0, 0.5, 0.74, 1]} style={StyleSheet.absoluteFill} />
       <View style={[st.content, { paddingBottom: insets.bottom + S.x3 }]}>
         <Enter style={{ alignItems: 'center' }}>
@@ -26,10 +26,7 @@ export default function IntroScreen({ onDone, t }) {
           <Text style={[T.display, st.title, { color: c.ink }]}>SGKS Notes</Text>
           <Text style={[T.caption, { color: c.brass, marginTop: S.m }]}>{ACHARYA.toUpperCase()}</Text>
           <Text style={{ fontFamily: F.read, fontSize: 13.5, color: c.inkSoft, marginTop: 4 }}>{ACHARYA_TE}</Text>
-          <Text style={{ fontFamily: F.read, fontSize: 16, lineHeight: 28, color: c.ink, textAlign: 'center', marginTop: S.l }}>
-            ప్రవచనంలోని ప్రతి మాట — భద్రంగా.
-          </Text>
-          <Text style={[T.body, { color: c.inkSoft, textAlign: 'center' }]}>Every word of the pravachanam, kept.</Text>
+          <Text style={[T.body, { color: c.inkSoft, textAlign: 'center', marginTop: S.l }]}>Every word of the pravachanam, kept.</Text>
           <Button c={c} label={t('begin')} onPress={onDone} style={{ marginTop: S.xxl, minWidth: 240 }} />
         </Enter>
       </View>

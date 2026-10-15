@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Animated, Easing, AccessibilityInfo } from 'react-native';
 
-export default function Waveform({ color = '#F3C672', accent = '#E9922E', bars = 28, height = 56, barWidth = 4, gap = 4 }) {
+export default function Waveform({ color = '#F2C877', accent = '#EE9A3A', bars = 28, height = 56, barWidth = 4, gap = 4 }) {
   const values = useMemo(() => Array.from({ length: bars }, () => new Animated.Value(0.3)), [bars]);
   const [reduce, setReduce] = useState(false);
   const loops = useRef([]);

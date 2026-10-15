@@ -87,12 +87,12 @@ export function IconButton({ c, icon, onPress, label, color }) {
 export function ActionTile({ c, icon, title, hint, onPress, hero, busy, style }) {
   const inner = (
     <>
-      <View style={[st.tileRing, { borderColor: hero ? 'rgba(243,198,114,0.55)' : c.line, backgroundColor: hero ? 'rgba(18,13,9,0.18)' : c.raised }]}>
+      <View style={[st.tileRing, { borderColor: hero ? 'rgba(242,200,119,0.55)' : c.line, backgroundColor: hero ? 'rgba(14,11,31,0.18)' : c.raised }]}>
         <Icon name={icon} size={hero ? 26 : 22} color={hero ? c.onFill : c.brass} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={[isTelugu(title) ? T.titleTe : T.title, { color: hero ? c.onFill : c.ink, fontSize: hero ? 22 : 18 }]}>{title}</Text>
-        <Text style={[T.body, { color: hero ? 'rgba(242,231,211,0.82)' : c.muted, marginTop: 2 }, isTelugu(hint) && { fontFamily: F.read, fontSize: 14 }]}>{busy || hint}</Text>
+        <Text style={[T.body, { color: hero ? 'rgba(245,236,223,0.82)' : c.muted, marginTop: 2 }, isTelugu(hint) && { fontFamily: F.read, fontSize: 14 }]}>{busy || hint}</Text>
       </View>
       <Icon name="chevron" size={18} color={hero ? c.onFill : c.muted} />
     </>
