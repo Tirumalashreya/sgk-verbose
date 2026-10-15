@@ -1,17 +1,21 @@
+// Export notes as PDF / Word. Phones: native PDF + share sheet. Web: print dialog / file download.
+import { isWeb, notify } from './platform';
+
 const ACHARYA = 'Satluri Gopāla Krishnamāchārya';
 
+const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 function buildHTML(session, forPrint = false) {
-  const title   = session.title    || 'Pravachanam';
-  const summary = session.summary  || '';
-  const notes   = session.notes    || session.transcript || '';
-  const transcript = session.transcript || '';
-  const shlokas = session.shlokas  || [];
+  const title   = esc(session.title || 'Pravachanam');
+  const summary = esc(session.summary || '');
+  const notes   = session.notes || session.transcript || '';   // the notes are the full verbatim transcript
+  const shlokas = session.shlokas || [];
 
   const shlokaRows = shlokas.map((s, i) => `
     <div class="shloka">
-      <span class="shloka-label">${(s.type || 'Shloka').toUpperCase()} ${i + 1}${s.language ? ' · ' + s.language : ''}</span>
-      <p class="shloka-text">${s.text || ''}</p>
-      ${s.original ? `<p class="shloka-original">${s.original}</p>` : ''}
+      <span class="shloka-label">${esc((s.type || 'Shloka').toUpperCase())} ${i + 1}${s.language ? ' · ' + esc(s.language) : ''}</span>
+      <p class="shloka-text">${esc(s.text)}</p>
+      ${s.original ? `<p class="shloka-original">${esc(s.original)}</p>` : ''}
     </div>
   `).join('');
 
@@ -19,16 +23,9 @@ function buildHTML(session, forPrint = false) {
     const t = line.trim();
     if (!t) return '<br/>';
     const sm = t.match(/^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/);
-    if (sm) return `<p class="shloka-text"><strong>"${sm[1]}"</strong>${sm[2] ? `<br/><span class="shloka-original">${sm[2]}</span>` : ''}</p>`;
-    const hm = t.match(/^\*{1,2}(.+?)\*{1,2}$/);
-    if (hm) return `<h3>${hm[1].trim()}</h3>`;
-    return `<p>${t}</p>`;
+    if (sm) return `<p class="shloka-text"><strong>"${esc(sm[1])}"</strong>${sm[2] ? `<br/><span class="shloka-original">${esc(sm[2])}</span>` : ''}</p>`;
+    return `<p>${esc(t)}</p>`;
   }).join('');
-
-  const transcriptBlocks = transcript.split(/[।\n]/)
-    .filter(l => l.trim().length > 3)
-    .map(l => `<p>${l.trim()}</p>`)
-    .join('');
 
   return `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -65,12 +62,6 @@ function buildHTML(session, forPrint = false) {
     ${noteBlocks}
   </div>` : ''}
 
-  ${transcript ? `
-  <div class="section">
-    <div class="section-title">Transcript</div>
-    ${transcriptBlocks}
-  </div>` : ''}
-
   ${shlokas.length > 0 ? `
   <div class="section">
     <div class="section-title">Shlokas & Pasurams (${shlokas.length})</div>
@@ -80,29 +71,44 @@ function buildHTML(session, forPrint = false) {
 </html>`;
 }
 
-export function downloadPDF(session) {
+const fileName = (session, ext) =>
+  `${(session.title || 'pravachanam').replace(/[^a-z0-9\u0C00-\u0C7F ]/gi, '_').trim() || 'pravachanam'}.${ext}`;
+
+export async function downloadPDF(session) {
   const html = buildHTML(session, true);
-  const win = window.open('', '_blank', 'width=800,height=900');
-  if (!win) { alert('Allow popups to download PDF'); return; }
-  win.document.write(html);
-  win.document.close();
-  win.onload = () => {
-    setTimeout(() => {
-      win.focus();
-      win.print();
-    }, 800);
-  };
+  if (isWeb) {
+    const win = window.open('', '_blank', 'width=800,height=900');
+    if (!win) { notify('Pop-up blocked', 'Allow pop-ups for this site to save the PDF.'); return; }
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => setTimeout(() => { win.focus(); win.print(); }, 800);
+    return;
+  }
+  const Print = await import('expo-print');
+  const Sharing = await import('expo-sharing');
+  const { uri } = await Print.printToFileAsync({ html });
+  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileName(session, 'pdf') });
 }
 
-export function downloadDOC(session) {
+export async function downloadDOC(session) {
   const html = buildHTML(session, false);
-  const blob = new Blob(['﻿', html], { type: 'application/msword;charset=utf-8' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `${(session.title || 'pravachanam').replace(/[^a-z0-9ఀ-౿ ]/gi, '_')}.doc`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  if (isWeb) {
+    const blob = new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName(session, 'doc');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return;
+  }
+  const { File, Paths } = await import('expo-file-system');
+  const Sharing = await import('expo-sharing');
+  const file = new File(Paths.cache, fileName(session, 'doc'));
+  if (file.exists) file.delete();
+  file.create();
+  file.write('\ufeff' + html);
+  await Sharing.shareAsync(file.uri, { mimeType: 'application/msword', UTI: 'com.microsoft.word.doc', dialogTitle: fileName(session, 'doc') });
 }

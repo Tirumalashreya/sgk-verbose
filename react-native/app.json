@@ -5,14 +5,37 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/acharya.png",
-    "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/acharya.png",
-      "resizeMode": "cover",
-      "backgroundColor": "#17120d"
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.sgks.shravanam"
     },
-    "assetBundlePatterns": ["**/*"],
-    "ios": { "supportsTablet": true, "bundleIdentifier": "org.sgks.shravanam" },
-    "android": { "package": "org.sgks.shravanam" }
+    "android": {
+      "package": "org.sgks.shravanam"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-status-bar",
+      "expo-sharing",
+      "expo-asset",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "ప్రవచనాన్ని రికార్డ్ చేసి నోట్స్ తయారు చేయడానికి మైక్రోఫోన్ అవసరం. / The microphone is used to record the pravachanam and turn it into notes."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/acharya.png",
+          "resizeMode": "cover",
+          "backgroundColor": "#17120d",
+          "imageWidth": 200
+        }
+      ]
+    ]
   }
 }
