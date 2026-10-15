@@ -3,7 +3,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { palettes, F, T, S, ACHARYA, ACHARYA_TE, acharyaLogo } from '../theme';
+import { palettes, F, T, S, ACHARYA, ACHARYA_TE, acharyaIntroPhoto } from '../theme';
 import { Button, Enter } from '../ui/kit';
 import Waveform from '../ui/Waveform';
 import CoverImage from '../ui/CoverImage';
@@ -14,7 +14,7 @@ export default function IntroScreen({ onDone, t }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={st.page}>
-      <CoverImage source={acharyaLogo} size={{ width: 900, height: 900 }} focus={{ x: 0.5, y: 0.3 }} accessibilityLabel={ACHARYA} />
+      <CoverImage source={acharyaIntroPhoto} size={{ width: 1280, height: 854 }} focus={{ x: 0.48, y: 0.3 }} accessibilityLabel={ACHARYA} />
       {/* darken only the lower part so the text reads over the photo */}
       <LinearGradient colors={['rgba(18,13,9,0)', 'rgba(18,13,9,0.55)', 'rgba(18,13,9,0.94)', c.bg]}
         locations={[0, 0.5, 0.74, 1]} style={StyleSheet.absoluteFill} />
