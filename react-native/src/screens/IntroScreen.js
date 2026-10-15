@@ -26,7 +26,7 @@ export default function IntroScreen({ onDone, t, lang }) {
         </Enter>
 
         <Enter delay={180} style={{ alignItems: 'center' }}>
-          <Deepam level={0.1} active size={150} />
+          <Deepam level={0.1} active size={150} flat />
         </Enter>
 
         <Enter delay={320} style={{ alignItems: 'center', gap: S.s }}>
