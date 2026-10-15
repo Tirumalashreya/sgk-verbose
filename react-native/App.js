@@ -33,7 +33,7 @@ export default function App() {
     NotoSerifTelugu_400Regular, NotoSerifTelugu_500Medium, NotoSerifDevanagari_500Medium, NotoSerifTamil_500Medium,
   });
   const [ready, setReady] = useState(false);
-  const [showIntro, setShowIntro] = useState(false);
+  const [showIntro, setShowIntro] = useState(true);   // the photo page opens every launch
   const [lang, setLangState] = useState('te');
   const [stack, setStack] = useState(['home']);
   const [params, setParams] = useState({});
@@ -46,8 +46,7 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const [seen, savedLang] = await Promise.all([storage.get('intro_seen'), storage.get('lang')]);
-      if (!seen) setShowIntro(true);
+      const savedLang = await storage.get('lang');
       if (savedLang) setLangState(savedLang);
       setReady(true);
     })();
@@ -96,7 +95,7 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <StatusBar style="light" />
-        <IntroScreen t={t} lang={lang} onDone={() => { setShowIntro(false); storage.set('intro_seen', '1'); }} />
+        <IntroScreen t={t} lang={lang} onDone={() => setShowIntro(false)} />
       </SafeAreaProvider>
     );
   }
