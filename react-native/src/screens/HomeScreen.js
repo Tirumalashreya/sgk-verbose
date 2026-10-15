@@ -34,7 +34,7 @@ export default function HomeScreen({ go, t, lang, setLang, upload }) {
   };
 
   return (
-    <Screen c={c} kolam={c.mode === 'hall'}
+    <Screen c={c} kolam
       refreshControl={<RefreshControl refreshing={refreshing} tintColor={c.brass}
         onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}>
       <Enter style={st.header}>

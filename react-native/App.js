@@ -106,12 +106,11 @@ export default function App() {
     pendingUpload: params.upload, clearPendingUpload: () => setParams((p) => ({ ...p, upload: null })),
     pendingLink: params.link, clearPendingLink: () => setParams((p) => ({ ...p, link: null })),
   };
-  const immersive = screen === 'live';
 
   return (
     <SafeAreaProvider>
-      <StatusBar style={immersive || c.mode === 'hall' ? 'light' : 'dark'} />
-      <View style={{ flex: 1, backgroundColor: immersive ? palettes.hall.bg : c.bg }}>
+      <StatusBar style="dark" />
+      <View style={{ flex: 1, backgroundColor: c.bg }}>
         <View style={{ flex: 1 }}>
           {screen === 'home' && <HomeScreen {...shared} />}
           {screen === 'live' && <LiveScreen {...shared} />}

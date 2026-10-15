@@ -12,7 +12,7 @@ import { createWebSocket, startLive, stopSession, uploadAudio, startSession, get
 import { useMinuteRecorder } from '../services/useMinuteRecorder';
 import { notify, isWeb } from '../services/platform';
 
-const c = palettes.hall;
+const c = palettes.manuscript;
 const STAGES = ['transcription', 'correction', 'shloka_detector', 'knowledge_structurer', 'formatting', 'validation', 'memory'];
 const isTe = (s) => /[ఀ-౿]/.test(s || '');
 const fmt = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -201,7 +201,7 @@ const st = StyleSheet.create({
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.s },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   stages: { width: '100%', maxWidth: 560, alignSelf: 'center', paddingHorizontal: S.l, paddingBottom: S.xl },
-  preview: { maxHeight: 190, marginHorizontal: S.l, borderRadius: R.panel, backgroundColor: 'rgba(23,19,45,0.72)' },
+  preview: { maxHeight: 190, marginHorizontal: S.l, borderRadius: R.panel, backgroundColor: 'rgba(252,248,240,0.92)', borderWidth: 1, borderColor: palettes.manuscript.line },
   controls: { alignItems: 'center', paddingTop: S.l },
   error: { marginTop: S.l, borderWidth: 1, borderRadius: R.control, padding: S.m, maxWidth: 420 },
 });

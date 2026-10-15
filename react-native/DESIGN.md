@@ -6,8 +6,9 @@ and clear like a well-printed palm-leaf manuscript. Tokens live in `src/theme.js
 the contract they implement.
 
 ## 1. Visual theme
-- **Two modes, one identity.** *Hall* (dark, immersive) is the default for Intro and Live.
-  *Manuscript* (light, palm-leaf paper) or *Hall* for reading, following the phone's setting.
+- **One light look, everywhere.** *Manuscript* (warm ivory, indigo ink, maroon, marigold gold —
+  the colours of the intro photo) is used on every screen. *Hall* (dark indigo) is used only on
+  the Intro, as the fade over the full-page photo.
 - **Light sources, not decoration.** Warmth comes from glow (the deepam, brass edges, soft
   radial light), never from neon glows, purple gradients or drop-shadow halos.
 - **Pattern sparingly.** A faint kolam dot-grid texture on large dark surfaces and a single
@@ -16,20 +17,20 @@ the contract they implement.
 ## 2. Colour (tinted — no pure black, no pure white)
 | Token | Hall (dark) | Manuscript (light) | Use |
 |---|---|---|---|
-| `bg` | `#0E0B1F` indigo velvet | `#F6EEDD` palm leaf | screen background |
-| `surface` | `#17132D` | `#FBF5E9` | panels, list rows |
-| `raised` | `#211C3D` | `#FFFDF7` | the one elevated element per screen |
-| `ink` | `#F5ECDF` cream | `#2A1F14` lamp-black | primary text |
-| `inkSoft` | `#D8CCBC` | `#4E4131` | secondary text |
-| `muted` | `#A39AB8` | `#6E604A` | captions (≥4.5:1 on its bg) |
-| `line` | `#332C52` | `#E2D3B4` | hairlines |
-| `brass` | `#E3B35C` marigold | `#8C6420` | accents, focus, selected |
-| `brassBright` | `#F2C877` | `#B07D24` | flame highlight, active state |
+| `bg` | `#0E0B1F` indigo velvet | `#F4EEE2` ivory | screen background |
+| `surface` | `#17132D` | `#FCF8F0` | panels, list rows |
+| `raised` | `#211C3D` | `#FFFEFA` | the one elevated element per screen |
+| `ink` | `#F5ECDF` cream | `#1E1A36` indigo ink | primary text |
+| `inkSoft` | `#D8CCBC` | `#433D5C` | secondary text |
+| `muted` | `#A39AB8` | `#625C74` | captions (≥4.5:1 on its bg) |
+| `line` | `#332C52` | `#DCCFB6` | hairlines |
+| `brass` | `#E3B35C` marigold | `#7E5A12` | accents, focus, selected |
+| `brassBright` | `#F2C877` | `#B8862C` | flame highlight, active state |
 | `kumkum` | `#8E1E3A` maroon | `#861C36` | fill for the primary action (Record), destructive |
 | `kumkumText` | `#F08A9C` lotus | `#861C36` | red *text* (e.g. a Delete label) |
-| `turmeric` | `#EE9A3A` | `#B8641A` | progress, live indicators |
-| `leaf` | `#88C49C` | `#2F6B3F` | verified / done |
-| `review` | `#EAC060` | `#8A5A00` | needs-review badges |
+| `turmeric` | `#EE9A3A` | `#A3570F` | progress, live indicators |
+| `leaf` | `#88C49C` | `#2C6A43` | verified / done |
+| `review` | `#EAC060` | `#875800` | needs-review badges |
 
 Rules: text on a coloured fill uses `ink` of the *opposite* mode (never grey on colour).
 `turmeric` is for bars/dots only, never text. Every text/background pair above meets WCAG AA

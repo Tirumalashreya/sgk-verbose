@@ -1,5 +1,4 @@
 // Design tokens — the implementation of DESIGN.md. Change DESIGN.md first.
-import { useColorScheme } from 'react-native';
 
 export const palettes = {
   // Hall: the pravachanam stage — indigo velvet, marigold gold, maroon cloth,
@@ -15,17 +14,18 @@ export const palettes = {
     onBrass: '#0E0B1F',         // text on gold fills
     kolam: 'rgba(227,179,92,0.07)',
   },
-  // Manuscript: palm-leaf paper for reading by day
+  // Manuscript: the app's one everyday look — warm ivory, indigo ink (the velvet),
+  // maroon (the cloth) and marigold gold, in sync with the intro photo.
   manuscript: {
     mode: 'manuscript',
-    bg: '#F6EEDD', surface: '#FBF5E9', raised: '#FFFDF7',
-    ink: '#2A1F14', inkSoft: '#4E4131', muted: '#6E604A', line: '#E2D3B4',
-    brass: '#8C6420', brassBright: '#B07D24',
-    kumkum: '#861C36', kumkumDeep: '#5E1226', kumkumText: '#861C36',
-    turmeric: '#B8641A', leaf: '#2F6B3F', review: '#8A5A00',
-    onFill: '#F6EEDD',
-    onBrass: '#FFFDF7',
-    kolam: 'rgba(140,100,32,0.08)',
+    bg: '#F4EEE2', surface: '#FCF8F0', raised: '#FFFEFA',
+    ink: '#1E1A36', inkSoft: '#433D5C', muted: '#625C74', line: '#DCCFB6',
+    brass: '#7E5A12', brassBright: '#B8862C',
+    kumkum: '#8A1C36', kumkumDeep: '#5E1226', kumkumText: '#8A1C36',
+    turmeric: '#A3570F', leaf: '#2C6A43', review: '#875800',
+    onFill: '#FFFCF6',
+    onBrass: '#FFFEFA',
+    kolam: 'rgba(30,26,54,0.045)',
   },
 };
 
@@ -61,12 +61,10 @@ export const S = { xs: 4, s: 8, m: 12, l: 16, xl: 20, xxl: 24, x3: 32, x4: 40, x
 export const R = { control: 10, panel: 18, pill: 999 };
 export const MOTION = { enter: 280, quick: 180, breathe: 2800 };
 
-/** Theme for the current screen: reading screens follow the phone setting;
- *  immersive screens (Intro, Live) always use the Hall palette. */
+/** Theme for the current screen: one light look everywhere. Only the Intro, which
+ *  sits on the photo, uses the dark Hall palette directly. */
 export function useTheme(forceMode) {
-  const scheme = useColorScheme();
-  const mode = forceMode || (scheme === 'light' ? 'manuscript' : 'hall');
-  return palettes[mode];
+  return palettes[forceMode || 'manuscript'];
 }
 
 export const ACHARYA = 'Satluri Gopāla Krishnamāchārya';

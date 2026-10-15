@@ -32,7 +32,7 @@
         {
           "image": "./assets/acharya.png",
           "resizeMode": "cover",
-          "backgroundColor": "#0E0B1F",
+          "backgroundColor": "#F4EEE2",
           "imageWidth": 200
         }
       ]
