@@ -1,12 +1,12 @@
-// Live — record in the hall (deepam follows the voice), or follow an upload /
-// YouTube link through the pipeline. Always the Hall palette (immersive).
+// Live — record in the hall (the waves follow the voice), or follow an upload /
+// YouTube link through the pipeline.
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, AccessibilityInfo, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { palettes, F, T, S, R } from '../theme';
-import { Button, IconButton, Chip, StagePath, Overline, Enter } from '../ui/kit';
-import Deepam from '../ui/Deepam';
+import { Button, IconButton, Chip, StagePath, Overline, Enter, Portrait } from '../ui/kit';
+import Waveform from '../ui/Waveform';
 import Kolam from '../ui/Kolam';
 import { createWebSocket, startLive, stopSession, uploadAudio, startSession, getSessions } from '../services/api';
 import { useMinuteRecorder } from '../services/useMinuteRecorder';
@@ -27,7 +27,6 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
   const [active, setActive] = useState('transcription');
   const [preview, setPreview] = useState([]);
   const [error, setError] = useState('');
-  const [reduceMotion, setReduceMotion] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const pieces = useRef(0);
   const startedAt = useRef(0);
@@ -41,7 +40,6 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
     catch (e) { console.warn('[live] minute upload failed', e); }
   });
 
-  useEffect(() => { AccessibilityInfo.isReduceMotionEnabled?.().then(setReduceMotion); }, []);
   useEffect(() => {
     if (mode !== 'recording') return undefined;
     const id = setInterval(() => setElapsed(Date.now() - startedAt.current), 1000);
@@ -143,7 +141,7 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
 
   const recording = mode === 'recording';
   const busy = mode === 'processing' || mode === 'saving';
-  const level = recording ? recorder.level : busy ? 0.25 : 0.06;
+  const level = recording ? recorder.level : busy ? 0.5 : 0.08;
   const banner = upload && mode === 'processing'
     ? (upload.status === 'uploading' ? `${upload.name}…` : `${t('uploaded')} · ${t('noNeedAgain')}`)
     : null;
@@ -160,7 +158,10 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
       </View>
 
       <View style={st.center}>
-        <Deepam level={level} active={recording || busy} size={300} reduceMotion={reduceMotion} />
+        <Portrait c={c} size={120} />
+        <View style={{ marginTop: S.x3 }}>
+          <Waveform color={c.brassBright} accent={c.kumkum} bars={32} height={72} level={level} />
+        </View>
         <Enter delay={60} style={{ alignItems: 'center', marginTop: S.l, paddingHorizontal: S.xl }}>
           <Text style={[isTe(heading) ? T.displayTe : T.display, { color: c.ink, textAlign: 'center' }]} numberOfLines={2}>{heading}</Text>
           {mode === 'idle' && (
