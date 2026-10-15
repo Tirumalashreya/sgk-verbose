@@ -69,12 +69,19 @@ def validate(transcript: str, notes: str, shlokas: list) -> list[dict]:
     return errors
 
 
+CONFIDENCE_FLOOR = 0.6
+
+
 def validation_agent(state: VerbaState) -> VerbaState:
     errors = validate(state.get("transcript") or "", state.get("notes") or "", state.get("shlokas") or [])
     gaps = state.get("transcription_gaps") or 0
     if gaps:
         errors.append({"type": "asr_gap",
                        "message": f"{gaps} audio piece(s) could not be transcribed — marked [?] in the transcript"})
+    confidence = state.get("asr_confidence")
+    if confidence is not None and confidence < CONFIDENCE_FLOOR:
+        errors.append({"type": "low_asr_confidence",
+                       "message": f"term-dictionary confidence {confidence:.0%} is below {CONFIDENCE_FLOOR:.0%} — worth a listen"})
     state["validation_passed"] = not errors
     state["validation_errors"] = errors
     state["needs_manual_review"] = bool(errors)

@@ -8,6 +8,7 @@ class VerbaState(TypedDict):
     asr_provider: Optional[str]            # dual | gemini | sarvam | google
     asr_report: Optional[dict]             # two-listener agreement, judge decisions, unresolved spots
     transcription_gaps: Optional[int]      # audio pieces ASR failed on, shown as [?]
+    asr_confidence: Optional[float]        # term-dictionary fidelity score (0-1), an extra signal only
     detected_language: Optional[str]
     shlokas: Optional[List[dict]]
     segments: Optional[List[dict]]

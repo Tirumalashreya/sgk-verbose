@@ -3,7 +3,8 @@ import json, re
 from agents.groq_llm_client import call as _groq_call, parallel_map, STRONG_MODEL
 from agents.text_chunker import chunk_text
 from agents.verbatim import (normalize_ws, clean_verse, find_all, expand_to_words, verse_script,
-                             has_devanagari, devanagari_to_telugu, telugu_to_devanagari)
+                             has_devanagari)
+from agents.transliteration_agent import transliterate_to_telugu, transliterate_to_devanagari
 from agents import verse_library
 from dotenv import load_dotenv
 load_dotenv()
@@ -84,10 +85,10 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
         script = verse_script(text, lang)
         if has_devanagari(text):
             # Sarvam already wrote this verse in Devanagari — show Telugu script as the second line
-            original = devanagari_to_telugu(text)
+            original = transliterate_to_telugu(text)
         elif script == "Sanskrit":
             # Telugu-script Sanskrit → Devanagari (same sounds, different script)
-            original = telugu_to_devanagari(text)
+            original = transliterate_to_devanagari(text)
         else:
             # Tamil: Telugu→Tamil script is lossy; unknown: don't guess
             original = ""

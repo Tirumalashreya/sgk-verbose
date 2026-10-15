@@ -75,16 +75,8 @@ GAP_MARKER = "[?]"  # stands in for audio that could not be transcribed
 
 def _sarvam_keyterms() -> list[str]:
     """Up to 50 Vaishnava terms (API limit, 64 chars each) to bias saaras:v4."""
-    import json
-    path = os.path.join(os.path.dirname(__file__), "..", "data", "vaishnava_terms.json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        print(f"[transcription] could not load keyterms: {e}")
-        return []
-    terms = [t for t in data.get("telugu", []) + data.get("sanskrit", []) if len(t) <= 64]
-    return list(dict.fromkeys(terms))[:50]
+    from agents.term_dictionary import sarvam_keyterms
+    return sarvam_keyterms()
 
 
 def sarvam_settings(model: str | None = None, mode: str | None = None, keyterms: bool | None = None) -> dict:
@@ -273,11 +265,18 @@ def transcription_agent(state: VerbaState) -> VerbaState:
             if len(result) > 4:
                 state["asr_report"] = result[4]   # two-listener agreement and judge decisions
             if text.strip() and text.replace(GAP_MARKER, "").strip():
+                from agents.term_dictionary import term_fidelity
                 state["transcription_gaps"] = gaps
                 state["transcript"] = text
                 state["detected_language"] = lang
                 state["transcript_segments"] = segments
                 state["asr_provider"] = name.lower()
+                # Term-dictionary fidelity, blended with the two-listener agreement
+                # score when there is one — an extra signal for validation, never
+                # used to pick or alter the transcript itself.
+                fidelity = term_fidelity(text)
+                agreement = (state.get("asr_report") or {}).get("agreement")
+                state["asr_confidence"] = round((fidelity + agreement) / 2, 3) if agreement is not None else fidelity
                 state["current_agent"] = "transcription_done"
                 return state
             print(f"[transcription] {name} returned empty — trying next provider")
