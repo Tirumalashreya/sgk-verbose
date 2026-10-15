@@ -1,4 +1,4 @@
-# Shravaṇam — SGKS Pravachanam App (React Native / Expo)
+# SGKS Notes — Pravachanam App (React Native / Expo)
 
 A transcription companion for the Telugu spiritual discourses of **Satluri Gopāla
 Krishnamāchārya**. Its core job: **transcribe audio** — either *pasted* (a YouTube /
