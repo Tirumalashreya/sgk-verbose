@@ -145,8 +145,28 @@ def dual_stt(path: str) -> tuple:
     settings = ta.sarvam_settings("saaras:v4", "verbatim", True)
 
     def sarvam_side():
+        """One failed chunk (after its own retries) must not discard every other
+        chunk's work — that turned one transient error into losing the whole
+        listener for a 2-hour recording. Failed chunks become GAP_MARKER, same
+        as the single-listener path in transcription_agent.py."""
+        from concurrent.futures import as_completed
+        results, failed = {}, []
+        last_error = ""
         with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as ex:
-            return list(ex.map(lambda ic: ta._sarvam_transcribe_chunk((ic[0], ic[1], settings))[1], enumerate(chunks)))
+            futures = {ex.submit(ta._sarvam_transcribe_chunk, (i, c, settings)): i for i, c in enumerate(chunks)}
+            for fut in as_completed(futures):
+                i = futures[fut]
+                try:
+                    results[i] = fut.result()[1]
+                except Exception as e:
+                    failed.append(i)
+                    last_error = str(e)[:200]
+                    print(f"  [sarvam chunk {i}] FAILED after retries: {last_error}")
+        if failed and len(failed) == len(chunks):
+            raise RuntimeError(f"all {len(chunks)} chunk(s) failed; last error: {last_error}")
+        if failed:
+            print(f"[transcription] Sarvam: {len(failed)}/{len(chunks)} chunk(s) failed, keeping the rest")
+        return [results.get(i, ta.GAP_MARKER) for i in range(len(chunks))]
 
     with ThreadPoolExecutor(max_workers=2) as ex:
         fa, fb = ex.submit(sarvam_side), ex.submit(g.gemini_stt, path, "llm")
@@ -154,11 +174,11 @@ def dual_stt(path: str) -> tuple:
         try:
             a_texts = fa.result()
         except Exception as e:
-            a_texts, errors["sarvam"] = None, str(e)[:150]
+            a_texts, errors["sarvam"] = None, ta._short_error(e)
         try:
             b_text, _, _, b_gaps = fb.result()
         except Exception as e:
-            b_text, b_gaps, errors["gemini"] = None, 0, str(e)[:150]
+            b_text, b_gaps, errors["gemini"] = None, 0, ta._short_error(e)
 
     # One listener down: carry on with the other, and say so
     if a_texts is None and b_text is None:

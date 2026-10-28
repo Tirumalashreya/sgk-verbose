@@ -210,6 +210,13 @@ def _split_audio(path: str, max_sec: int = 300) -> list:
 
 
 def _short_error(e: Exception) -> str:
+    # SDK exceptions carry the real reason in .status_code/.body — the message
+    # text alone (e.g. raw response headers) can be too generic to debug from.
+    status = getattr(e, "status_code", None)
+    body = getattr(e, "body", None)
+    if status or body:
+        detail = (str(body)[:150] if body else "") or str(e)[:120]
+        return f"HTTP {status}: {detail}" if status else detail
     msg = str(e)
     for code, text in (("402", "out of credits"), ("401", "invalid key"), ("403", "permission denied"),
                        ("429", "rate limit / quota"), ("503", "service overloaded")):
