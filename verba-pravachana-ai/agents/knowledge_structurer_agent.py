@@ -34,6 +34,10 @@ def _structure_chunk(chunk_text_str: str) -> list:
     return []
 
 def knowledge_structurer_agent(state: VerbaState) -> VerbaState:
+    if state.get("live_piece"):
+        # Same reason as shloka_detect_agent: this piece's segments are never
+        # shown during the live preview and get fully redone at finalize time.
+        return {"segments": []}
     print("[knowledge_structurer] starting...")
     transcript = state.get("transcript", "") or ""
     chunks = chunk_text(transcript, chunk_size=1500, overlap=150)

@@ -41,6 +41,11 @@ def _detect_in_chunk(chunk_text_str: str) -> list:
     return []
 
 def shloka_detect_agent(state: VerbaState) -> VerbaState:
+    if state.get("live_piece"):
+        # One minute of a recording still in progress: a verse can straddle two
+        # pieces, so this only ever sees a false partial view of it. The whole
+        # recording is detected once, correctly, when it stops.
+        return {"shlokas": []}
     print("[shloka_detect] starting...")
     transcript = state.get("transcript", "") or ""
     norm_transcript = normalize_ws(transcript)
