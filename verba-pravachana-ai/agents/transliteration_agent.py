@@ -7,17 +7,19 @@ This wraps the conversion functions in verbatim.py (shared with the shloka
 detector, which already calls them to attach a Devanagari/Tamil original to
 each verified verse) under the name/signature this project's spec asks for.
 """
-from agents.verbatim import devanagari_to_telugu, telugu_to_devanagari, telugu_to_iast
+from agents.verbatim import devanagari_to_telugu, tamil_to_telugu, telugu_to_devanagari, telugu_to_iast
 
 
 def transliterate_to_telugu(text: str, source: str = "devanagari") -> str:
-    """Convert a Sanskrit (Devanagari) or already-Telugu-script verse to Telugu
-    script. `source` is "devanagari" (default) or "telugu" (pass-through)."""
+    """Convert a Sanskrit (Devanagari) or Tamil verse to Telugu script, or pass
+    an already-Telugu-script verse through. `source` is "devanagari" (default),
+    "tamil", or "telugu"."""
     if not text:
         return text
     if source == "telugu":
         return text
-    result = devanagari_to_telugu(text)
+    convert = tamil_to_telugu if source == "tamil" else devanagari_to_telugu
+    result = convert(text)
     return result or text  # never fail silently into an empty verse
 
 

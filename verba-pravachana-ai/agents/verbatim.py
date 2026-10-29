@@ -86,6 +86,19 @@ def devanagari_to_telugu(text: str) -> str:
         return ""
 
 
+def tamil_to_telugu(text: str) -> str:
+    """A pasuram transcribed in genuine Tamil script (not spelled phonetically
+    in Telugu, which is the more common case this project otherwise handles)
+    — a reading line in Telugu script for a Telugu-reading audience."""
+    try:
+        from indic_transliteration import sanscript
+        from indic_transliteration.sanscript import transliterate
+        return transliterate(text, sanscript.TAMIL, sanscript.TELUGU)
+    except Exception as e:
+        print(f"[verbatim] tamil-to-telugu transliteration failed: {e}")
+        return ""
+
+
 def telugu_to_devanagari(text: str) -> str:
     """Script conversion only (same sounds, different script). Returns "" on failure."""
     try:

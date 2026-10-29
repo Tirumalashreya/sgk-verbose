@@ -5,6 +5,8 @@ from agents.text_chunker import chunk_text
 from agents.verbatim import (normalize_ws, clean_verse, find_all, expand_to_words, verse_script,
                              has_devanagari)
 from agents.transliteration_agent import transliterate_to_telugu, transliterate_to_devanagari
+
+_TAMIL_VERSE_MIN_CHARS = 18   # a recited verse runs long; ignore a stray Tamil name/word
 from agents import verse_library
 from dotenv import load_dotenv
 load_dotenv()
@@ -114,6 +116,11 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
         })
 
     shlokas = _verify_with_library(norm_transcript, shlokas)
+    native = _native_tamil_candidates(norm_transcript, [sp for s in shlokas for sp in s["occurrences"]])
+    if native:
+        print(f"  {len(native)} verse(s) found written in real Tamil script (missed the LLM pass — "
+              f"its prompt assumes Tamil is spelled phonetically in Telugu, which this wasn't)")
+    shlokas = sorted(shlokas + native, key=lambda s: s["start_index"])
     print(f"[shloka_detect] done — {len(all_raw)} detected, {len(shlokas)} verified")
     return {"shlokas": shlokas}
 
@@ -146,6 +153,39 @@ def _verify_with_library(norm_transcript: str, shlokas: list) -> list:
         })
         taken.extend(spans)
     return sorted(shlokas, key=lambda s: s["start_index"])
+
+
+def _native_tamil_candidates(norm_transcript: str, taken: list) -> list:
+    """Spoken Tamil that the ASR wrote in real Tamil script, not spelled out
+    phonetically in Telugu, never matches what the LLM prompt above assumes
+    ("both are written in Telugu script here") — so a genuine pasuram can sit
+    in the transcript, correctly transcribed, and simply never get looked at.
+    Catching it needs no model: a long run of real Tamil Unicode already IS
+    the verse. We only verify it (a Divya Prabandham match when there is one)
+    and give it a Telugu reading line — the same courtesy every other verse
+    in these notes gets."""
+    taken = list(taken)
+    out = []
+    for m in re.finditer(r'[஀-௿][஀-௿\s.,?!।॥]*[஀-௿]', norm_transcript):
+        a, b = expand_to_words(norm_transcript, m.start(), m.end())
+        text = norm_transcript[a:b]
+        if len(text) < _TAMIL_VERSE_MIN_CHARS or any(x < b and a < y for x, y in taken):
+            continue
+        spans = find_all(norm_transcript, text)
+        if not spans:
+            continue
+        lib = verse_library.match_verse(text)
+        out.append({
+            "language": "Tamil", "llm_language": None, "script_certain": True, "type": "Paasuram",
+            "text": text,
+            "original": transliterate_to_telugu(text, source="tamil"),
+            "reference": verse_library.reference(lib) if lib else None,
+            "confidence": max(0.95, lib["score"] / 100) if lib else 0.95,
+            "verified": True, "found_by": "native_script",
+            "start_index": spans[0][0], "end_index": spans[0][1], "occurrences": [list(sp) for sp in spans],
+        })
+        taken.extend(spans)
+    return out
 
 
 def _build_prompt(transcript: str) -> str:
