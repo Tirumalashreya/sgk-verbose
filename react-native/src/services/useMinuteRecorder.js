@@ -31,7 +31,11 @@ export function useMinuteRecorder(onPiece) {
   const start = async () => {
     const permission = await requestRecordingPermissionsAsync();
     if (!permission.granted) throw new Error('mic-denied');
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    // shouldPlayInBackground keeps the mic session alive when the phone is
+    // switched away from — needs enableBackgroundRecording in app.json's
+    // expo-audio plugin config too (the native half of this), which a plain
+    // Expo Go session can't pick up; a custom dev build can.
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
     await recorder.prepareToRecordAsync();
     recorder.record();
     running.current = true;

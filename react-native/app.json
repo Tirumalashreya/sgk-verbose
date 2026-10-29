@@ -24,7 +24,8 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "ప్రవచనాన్ని రికార్డ్ చేసి నోట్స్ తయారు చేయడానికి మైక్రోఫోన్ అవసరం. / The microphone is used to record the pravachanam and turn it into notes."
+          "microphonePermission": "ప్రవచనాన్ని రికార్డ్ చేసి నోట్స్ తయారు చేయడానికి మైక్రోఫోన్ అవసరం. / The microphone is used to record the pravachanam and turn it into notes.",
+          "enableBackgroundRecording": true
         }
       ],
       [
