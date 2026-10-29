@@ -101,12 +101,65 @@ _live_recording_session: dict | None = None   # the mic recording currently bein
 _live_lock = threading.Lock()                 # guards each live session's "pending" piece count
 _live_by_id: dict[str, dict] = {}            # mic recordings made since start-up, by id (for "continue")
 _active_upload_hashes: set[str] = set()  # uploads queued or processing — identical re-uploads are ignored
+RESUME_WINDOW_MINUTES = 15  # how long a crash/restart may leave a live session resumable — matches the
+                            # app's own "continue the previous recording?" window, for the same reason
 
 
 @app.on_event("startup")
 async def startup():
     global event_loop
     event_loop = asyncio.get_event_loop()
+    _recover_live_sessions()
+
+
+def _recover_live_sessions():
+    """A live recording's continuity (which id the next minute-piece belongs to)
+    only lived in memory — a crash or restart used to silently split it into two
+    recordings, the same bug /merge-sessions exists to clean up after. Every
+    minute already lands durably in sessions.json via _save_live_preview; the
+    only thing missing was restoring *which* saved session is still being
+    recorded into. Reuses the exact "continue" construction /start-live already
+    uses for the Continue prompt — recovery is just that, triggered here instead
+    of by the app."""
+    global _live_recording_session
+    now = datetime.utcnow()
+    in_progress = [s for s in sessions_store if s.get("live_in_progress")]
+    if not in_progress:
+        return
+    # Only one recording can really be "the one still in progress" — the most
+    # recently updated marker is it; any others are leftovers from an earlier
+    # crash and get closed out properly instead of left stuck.
+    in_progress.sort(key=lambda s: s.get("last_piece_at") or s.get("created_at") or "", reverse=True)
+    newest, *rest = in_progress
+    age_minutes = (now - datetime.fromisoformat(newest.get("last_piece_at") or newest.get("created_at"))).total_seconds() / 60
+    if age_minutes <= RESUME_WINDOW_MINUTES:
+        _live_recording_session = _build_continuation(newest)
+        _live_by_id[newest["id"]] = _live_recording_session
+        print(f"[live] resumed in-progress recording {newest['id'][:8]} after restart ({age_minutes:.1f} min old)")
+    else:
+        rest = [newest] + rest  # too old to still count as "the same recording in progress"
+    for s in rest:
+        print(f"[live] finalizing orphaned in-progress recording {s['id'][:8]}")
+        threading.Thread(target=_finalize_live_session, args=(_build_continuation(s),), daemon=True).start()
+
+
+def _build_continuation(earlier: dict) -> dict:
+    """The in-memory shape for a live session that continues an earlier
+    (possibly unfinished) one: its saved text becomes a fixed prefix, and new
+    minute-pieces are appended after it."""
+    session = {
+        **{k: earlier.get(k) for k in ("id", "type", "title", "created_at", "notes", "enhanced_notes",
+                                        "transliterated_notes", "summary", "asr_provider")},
+        "transcript": earlier.get("transcript") or "",
+        "raw_transcript": earlier.get("raw_transcript") or earlier.get("transcript") or "",
+        "shlokas": earlier.get("shlokas") or [], "segments": earlier.get("segments") or [],
+        "prefix": {k: earlier.get(k) for k in ("transcript", "raw_transcript", "notes",
+                                                "transliterated_notes", "shlokas")},
+        "prior_pieces": int(earlier.get("pieces_done") or earlier.get("pieces_recorded") or 0),
+        "pieces": [], "pending": 0, "stopped": False, "live": True,
+        "live_in_progress": True, "last_piece_at": datetime.utcnow().isoformat(),
+    }
+    return session
 
 
 @app.websocket("/ws")
@@ -175,17 +228,7 @@ async def start_live(data: StartLiveRequest | None = None):
     earlier = next((s for s in sessions_store if continue_id and s.get("id") == continue_id), None)
     if earlier is not None:
         # Continue: same notes, same id; the new minutes are appended to its transcript
-        _live_recording_session = {
-            **{k: earlier.get(k) for k in ("id", "type", "title", "created_at", "notes", "enhanced_notes",
-                                            "transliterated_notes", "summary", "asr_provider")},
-            "transcript": earlier.get("transcript") or "",
-            "raw_transcript": earlier.get("raw_transcript") or earlier.get("transcript") or "",
-            "shlokas": earlier.get("shlokas") or [], "segments": earlier.get("segments") or [],
-            "prefix": {k: earlier.get(k) for k in ("transcript", "raw_transcript", "notes",
-                                                    "transliterated_notes", "shlokas")},
-            "prior_pieces": int(earlier.get("pieces_recorded") or 1),
-            "pieces": [], "pending": 0, "stopped": False, "live": True,
-        }
+        _live_recording_session = _build_continuation(earlier)
         _live_by_id[earlier["id"]] = _live_recording_session
         return {"status": "ok", "continued": earlier["id"]}
     _live_recording_session = {
@@ -199,6 +242,9 @@ async def start_live(data: StartLiveRequest | None = None):
         "pending": 0,          # pieces uploaded but not yet processed
         "stopped": False,
         "live": True,
+        "live_in_progress": True,      # cleared once finalized — lets a restart find and resume this
+        "last_piece_at": datetime.utcnow().isoformat(),
+        "pieces_done": 0,              # real minute-pieces processed, for an accurate resume after a restart
     }
     _live_by_id[_live_recording_session["id"]] = _live_recording_session
     return {"status": "ok"}
@@ -451,6 +497,8 @@ def run_live_piece(session: dict, piece: int, audio_path: str, digest: str):
         session["transliterated_notes"] = "\n\n".join(p.get("transliterated_notes") or "" for p in done).strip()
         session["shlokas"] = [s for p in done for s in (p.get("shlokas") or [])]
         session["asr_provider"] = result.get("asr_provider")
+        session["pieces_done"] = session.get("pieces_done", 0) + 1
+        session["last_piece_at"] = datetime.utcnow().isoformat()
         _save_live_preview(session)
         _broadcast({"type": "chunk_complete", "chunk_index": piece, "title": session["title"],
                     "notes": result.get("notes"), "shlokas": result.get("shlokas") or [],
