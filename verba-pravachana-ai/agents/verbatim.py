@@ -9,8 +9,13 @@ _WS = re.compile(r"\s+")
 # Quotes / punctuation the LLM tends to wrap around extracted verses
 _EDGE_PUNCT = "\"'“”‘’«»`*()[]{}.,;:!?।॥-–— "
 
-# Shloka line emitted by the formatter: **"<verse>"** optionally followed by (<devanagari>)
+# Shloka markup emitted by the formatter: **"<verse>"** optionally followed by (<other script>).
+# A verse long enough to stand as its own line (a sentence or more) gets a whole line to
+# itself — SHLOKA_LINE matches that. A one- or two-word verse is folded inline into the
+# surrounding sentence instead — SHLOKA_MARK (the same pattern, unanchored) finds it there.
+# Both must stay byte-identical in body so stripping either way recovers the same text.
 SHLOKA_LINE = re.compile(r'^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$')
+SHLOKA_MARK = re.compile(r'\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?')
 
 
 def normalize_ws(text: str) -> str:

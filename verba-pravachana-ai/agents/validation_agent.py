@@ -5,7 +5,7 @@ formatter is deterministic, so a failure is flagged for manual review instead.
 import re
 from collections import Counter
 from graph.state import VerbaState
-from agents.verbatim import normalize_ws, SHLOKA_LINE
+from agents.verbatim import normalize_ws, SHLOKA_LINE, SHLOKA_MARK
 
 MIN_COVERAGE = 0.5
 _BOLD_LINE   = re.compile(r"^\*{1,2}.+\*{1,2}$")
@@ -14,14 +14,16 @@ _ALL_CAPS    = re.compile(r"^(?:[A-Z][A-Z'’-]*\s+){4,}[A-Z][A-Z'’-]*$")
 
 
 def _strip_markup(notes: str) -> str:
-    """Notes text with shloka markup removed — should equal the transcript."""
+    """Notes text with shloka markup removed — should equal the transcript. A
+    verse long enough to stand on its own line (SHLOKA_LINE) or short enough
+    to sit inline inside a sentence (SHLOKA_MARK, the same pattern unanchored)
+    are both reduced to their verbatim text the same way."""
     words = []
     for line in notes.split("\n"):
         line = line.strip()
         if not line:
             continue
-        m = SHLOKA_LINE.match(line)
-        words.append(m.group(1) if m else line)
+        words.append(SHLOKA_MARK.sub(lambda m: m.group(1), line))
     return normalize_ws(" ".join(words))
 
 

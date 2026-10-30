@@ -108,19 +108,37 @@ def _shloka_line(s: dict) -> str:
     return line
 
 
+INLINE_WORD_LIMIT = 2   # a verse this short (a name, a single phrase) reads better folded
+                        # into its sentence than set apart as its own line
+
+
+def _is_inline_shloka(s: dict) -> bool:
+    return len((s.get("text") or "").split()) <= INLINE_WORD_LIMIT
+
+
 def _render_paragraph(norm: str, start: int, end: int, spans) -> str:
     lines, cur = [], start
+    pending = []   # prose + any short (inline) verses, joined into one flowing line
+    def flush():
+        if pending:
+            lines.append(" ".join(pending))
+            pending.clear()
     for s_start, s_end, s in spans:
         if s_end <= start or s_start >= end:
             continue
         before = norm[cur:s_start].strip()
         if before:
-            lines.append(before)
-        lines.append(_shloka_line(s))
+            pending.append(before)
+        if _is_inline_shloka(s):
+            pending.append(_shloka_line(s))   # same markup — just not given its own line
+        else:
+            flush()
+            lines.append(_shloka_line(s))
         cur = s_end
     after = norm[cur:end].strip()
     if after:
-        lines.append(after)
+        pending.append(after)
+    flush()
     return "\n".join(lines)
 
 

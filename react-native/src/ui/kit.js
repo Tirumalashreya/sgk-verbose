@@ -215,8 +215,22 @@ export function VerseBlock({ c, text, original, reference, type }) {
   );
 }
 
-/** The notes: paragraphs of the verbatim transcript, verses where spoken. */
+/** The notes: paragraphs of the verbatim transcript, verses where spoken.
+ *  A verse long enough to stand on its own line becomes its own boxed block
+ *  (SHLOKA_LINE); a one- or two-word verse sits inline inside its sentence
+ *  instead (SHLOKA_MARK — the same markup, just not alone on its line). */
 const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
+const SHLOKA_MARK = /\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?/g;
+
+/** Telugu reads first for an inline verse, whichever field it's actually in;
+ *  the other script (if there is one) follows in brackets. Never guesses —
+ *  if neither side is in Telugu script, it shows what there is, no bracket. */
+function teluguFirst(text, original) {
+  if (isTelugu(text)) return { primary: text, bracket: original || '' };
+  if (isTelugu(original)) return { primary: original, bracket: text };
+  return { primary: text, bracket: '' };
+}
+
 export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel = (x) => x }) {
   const blocks = [];
   let para = [];
@@ -224,19 +238,50 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
   for (const raw of (notes || '').split('\n')) {
     const line = raw.trim();
     if (!line) { flush(); continue; }
-    const m = line.match(SHLOKA_LINE);
-    if (m) {
+    const whole = line.match(SHLOKA_LINE);
+    if (whole) {
       flush();
-      const meta = shlokas.find((s) => (s.text || '').trim() === m[1].trim());
-      blocks.push({ kind: 'verse', text: m[1], original: m[2], type: typeLabel(meta?.type) });
-    } else para.push(line.replace(/\*\*/g, ''));
+      const meta = shlokas.find((s) => (s.text || '').trim() === whole[1].trim());
+      blocks.push({ kind: 'verse', text: whole[1], original: whole[2], type: typeLabel(meta?.type) });
+      continue;
+    }
+    const inline = [...line.matchAll(SHLOKA_MARK)];
+    if (inline.length) {
+      flush();
+      const parts = [];
+      let last = 0;
+      for (const m of inline) {
+        if (m.index > last) parts.push({ kind: 'text', text: line.slice(last, m.index) });
+        parts.push({ kind: 'verse', text: m[1], original: m[2] });
+        last = m.index + m[0].length;
+      }
+      if (last < line.length) parts.push({ kind: 'text', text: line.slice(last) });
+      blocks.push({ kind: 'p-inline', parts });
+      continue;
+    }
+    para.push(line.replace(/\*\*/g, ''));
   }
   flush();
+  const baseStyle = roman ? { fontFamily: F.ui, fontSize: 16.5, lineHeight: 28 } : T.read;
   return (
     <View style={{ gap: S.l }}>
-      {blocks.map((b, i) => b.kind === 'verse'
-        ? <VerseBlock key={i} c={c} text={b.text} original={b.original} type={b.type} />
-        : <Text key={i} selectable style={[roman ? { fontFamily: F.ui, fontSize: 16.5, lineHeight: 28 } : T.read, { color: c.ink }]}>{b.text}</Text>)}
+      {blocks.map((b, i) => {
+        if (b.kind === 'verse') return <VerseBlock key={i} c={c} text={b.text} original={b.original} type={b.type} />;
+        if (b.kind === 'p-inline') return (
+          <Text key={i} selectable style={[baseStyle, { color: c.ink }]}>
+            {b.parts.map((p, j) => {
+              if (p.kind === 'text') return p.text;
+              const { primary, bracket } = teluguFirst(p.text, p.original);
+              return (
+                <Text key={j} style={{ fontFamily: F.readMed, color: c.brass }}>
+                  {primary}{bracket ? ` (${bracket})` : ''}
+                </Text>
+              );
+            })}
+          </Text>
+        );
+        return <Text key={i} selectable style={[baseStyle, { color: c.ink }]}>{b.text}</Text>;
+      })}
     </View>
   );
 }

@@ -4,6 +4,20 @@ import { isWeb, notify } from './platform';
 const ACHARYA = 'Satluri Gopāla Krishnamāchārya';
 
 const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const isTelugu = (s) => /[ఀ-౿]/.test(s || '');
+
+// A verse long enough for its own line (SHLOKA_LINE) vs one short enough to
+// sit inline inside a sentence (SHLOKA_MARK, the same markup, unanchored) —
+// mirrors react-native/src/ui/kit.js's ReadingText, since both parse the
+// same notes text independently.
+const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
+const SHLOKA_MARK = /\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?/g;
+
+function teluguFirst(text, original) {
+  if (isTelugu(text)) return { primary: text, bracket: original || '' };
+  if (isTelugu(original)) return { primary: original, bracket: text };
+  return { primary: text, bracket: '' };
+}
 
 function buildHTML(session, forPrint = false) {
   const title   = esc(session.title || 'Pravachanam');
@@ -22,9 +36,19 @@ function buildHTML(session, forPrint = false) {
   const noteBlocks = notes.split('\n').map(line => {
     const t = line.trim();
     if (!t) return '<br/>';
-    const sm = t.match(/^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/);
-    if (sm) return `<p class="shloka-text"><strong>"${esc(sm[1])}"</strong>${sm[2] ? `<br/><span class="shloka-original">${esc(sm[2])}</span>` : ''}</p>`;
-    return `<p>${esc(t)}</p>`;
+    const whole = t.match(SHLOKA_LINE);
+    if (whole) return `<p class="shloka-text"><strong>"${esc(whole[1])}"</strong>${whole[2] ? `<br/><span class="shloka-original">${esc(whole[2])}</span>` : ''}</p>`;
+    const inline = [...t.matchAll(SHLOKA_MARK)];
+    if (!inline.length) return `<p>${esc(t)}</p>`;
+    let html = '', last = 0;
+    for (const m of inline) {
+      html += esc(t.slice(last, m.index));
+      const { primary, bracket } = teluguFirst(m[1], m[2]);
+      html += `<span class="verse-inline">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
+      last = m.index + m[0].length;
+    }
+    html += esc(t.slice(last));
+    return `<p>${html}</p>`;
   }).join('');
 
   return `<!DOCTYPE html>
@@ -48,6 +72,7 @@ function buildHTML(session, forPrint = false) {
     .shloka-label { font-size: 10px; letter-spacing: 1.5px; color: #b58a3c; display: block; margin-bottom: 4px; }
     .shloka-text  { font-size: 15px; color: #5b513f; margin: 0 0 6px; }
     .shloka-original { font-size: 15px; color: #7a2e25; margin: 0; }
+    .verse-inline { font-weight: 600; color: #7a2e25; }
     ${forPrint ? '@media print { body { margin: 20px; } }' : ''}
   </style>
 </head>
