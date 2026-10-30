@@ -270,6 +270,35 @@ async def get_sessions():
     return {"sessions": sessions_store}
 
 
+@app.get("/sessions/{session_id}/timestamps")
+async def get_timestamps(session_id: str, force: bool = False):
+    """Notes with [MM:SS] markers, anchored to the real audio — computed
+    once per session and cached on it (notes_timestamped), since building
+    it re-transcribes the recording's audio. 404 if there's no audio left
+    on disk to anchor against; the app checks this before offering the
+    option, so a 404 here means the option shouldn't have been shown."""
+    from fastapi import HTTPException
+    session = next((s for s in sessions_store if s.get("id") == session_id), None)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not force and session.get("notes_timestamped"):
+        return {"notes_timestamped": session["notes_timestamped"]}
+
+    from agents import notes_timestamp as nt
+    if not nt.available(session):
+        raise HTTPException(status_code=404, detail="No audio left on disk to build timestamps from")
+
+    def _build_locked():
+        with _pipeline_semaphore:   # don't contend with an active recording's own transcription
+            return nt.build(session)
+    out = await asyncio.get_event_loop().run_in_executor(None, _build_locked)
+    if out is None:
+        raise HTTPException(status_code=404, detail="Could not align any audio to this recording's notes")
+    session["notes_timestamped"] = out
+    _save_sessions()
+    return {"notes_timestamped": out}
+
+
 @app.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
     global sessions_store
@@ -407,6 +436,7 @@ def _session_from_result(result: dict, title: str | None, chunk_index: int, **ex
         "asr_provider": result.get("asr_provider"),
         "asr_report": result.get("asr_report"),
         "youtube_url": result.get("youtube_url"),
+        "source_audio_path": result.get("audio_path"),   # for timestamp backfill — None if YouTube captions were used
         **_review_fields(result, chunk_index),
         **extra,
     }

@@ -4,9 +4,9 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useTheme, F, T, S, R } from '../theme';
 import { Screen, Enter, IconButton, Chip, Overline, ReadingText, VerseBlock, sessionStatus } from '../ui/kit';
-import { getSessions } from '../services/api';
+import { getSessions, getTimestampedNotes } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
-import { notify } from '../services/platform';
+import { notify, choose } from '../services/platform';
 
 const isTe = (s) => /[ఀ-౿]/.test(s || '');
 
@@ -15,6 +15,9 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   const [session, setSession] = useState(given || null);
   const [tab, setTab] = useState('notes');
   const [showReview, setShowReview] = useState(false);
+  // 'idle' | 'loading' | 'ready' | 'unavailable' | 'error'
+  const [tsStatus, setTsStatus] = useState('idle');
+  const [tsNotes, setTsNotes] = useState(null);
 
   useEffect(() => {
     if (given) { setSession(given); return; }
@@ -33,11 +36,38 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   const uncertain = session.asr_report?.uncertain || [];
   const review = sessionStatus(session) === 'review';
   const date = session.created_at ? new Date(session.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+
+  const loadTimestamps = async () => {
+    if (tsStatus === 'loading' || tsStatus === 'ready') return;
+    setTsStatus('loading');
+    try {
+      const notes = await getTimestampedNotes(session.id);
+      setTsNotes(notes);
+      setTsStatus('ready');
+    } catch (e) {
+      setTsStatus(String(e.message) === 'unavailable' ? 'unavailable' : 'error');
+    }
+  };
+  const selectTab = (id) => { setTab(id); if (id === 'timestamps') loadTimestamps(); };
+
   const exportAs = async (kind) => {
-    try { await (kind === 'pdf' ? downloadPDF(session) : downloadDOC(session)); }
+    const withTimestamps = await choose(t('exportTimestampTitle'), t('exportTimestampHint'),
+      t('exportWithTimestamps'), t('exportPlain'));
+    let toExport = session;
+    if (withTimestamps) {
+      try {
+        const notes = tsStatus === 'ready' && tsNotes ? tsNotes : await getTimestampedNotes(session.id);
+        toExport = { ...session, notes };
+      } catch (e) {
+        notify(kind.toUpperCase(), String(e.message) === 'unavailable' ? t('timestampsUnavailable') : String(e.message || e));
+        return;
+      }
+    }
+    try { await (kind === 'pdf' ? downloadPDF(toExport) : downloadDOC(toExport)); }
     catch (e) { notify(kind.toUpperCase(), String(e.message || e)); }
   };
-  const tabs = [['notes', t('notes')], ['roman', t('roman')], ['verses', `${t('versesTab')} · ${shlokas.length}`]];
+  const tabs = [['notes', t('notes')], ['roman', t('roman')], ['verses', `${t('versesTab')} · ${shlokas.length}`],
+    ['timestamps', t('timestampsTab')]];
 
   return (
     <Screen c={c}>
@@ -89,7 +119,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
         {tabs.map(([id, label]) => {
           const on = tab === id;
           return (
-            <Pressable key={id} onPress={() => setTab(id)} accessibilityRole="tab" accessibilityState={{ selected: on }}
+            <Pressable key={id} onPress={() => selectTab(id)} accessibilityRole="tab" accessibilityState={{ selected: on }}
               style={[st.tab, on && { backgroundColor: c.raised, borderColor: c.brass }]}>
               <Text style={[isTe(label) ? { fontFamily: F.readMed, fontSize: 14 } : T.label, { color: on ? c.ink : c.muted }]}>{label}</Text>
             </Pressable>
@@ -106,6 +136,13 @@ export default function ReadingScreen({ go, back, t, session: given }) {
               <VerseBlock key={i} c={c} text={s.text} original={s.original} type={t('verseType')(s.type)}
                 reference={s.reference ? `నాలాయిర దివ్య ప్రబంధం ${s.reference.number}` : null} />
             ))}</View>)}
+        {tab === 'timestamps' && (
+          tsStatus === 'loading' ? <Text style={[T.body, { color: c.muted, textAlign: 'center', marginTop: S.xl }]}>{t('timestampsBuilding')}</Text>
+          : tsStatus === 'unavailable' ? <Text style={[T.body, { color: c.muted, textAlign: 'center', marginTop: S.xl }]}>{t('timestampsUnavailable')}</Text>
+          : tsStatus === 'error' ? <Text style={[T.body, { color: c.kumkumText, textAlign: 'center', marginTop: S.xl }]}>{t('timestampsUnavailable')}</Text>
+          : tsStatus === 'ready' ? <ReadingText c={c} notes={tsNotes} shlokas={shlokas} typeLabel={t('verseType')} />
+          : null
+        )}
       </View>
     </Screen>
   );

@@ -70,6 +70,18 @@ export const deleteSession = async (sessionId) => {
   return res.json();
 };
 
+/** Notes with [MM:SS] markers, anchored to the real audio. Cached server-side
+ * after the first build — expect the first call for a recording to take a
+ * while (it re-transcribes the audio to recover timing), later ones to be
+ * instant. Throws 'unavailable' when the original audio is no longer on
+ * disk, so the caller can show that distinctly from a real error. */
+export const getTimestampedNotes = async (sessionId) => {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/timestamps`);
+  if (res.status === 404) throw new Error('unavailable');
+  if (!res.ok) throw new Error(`timestamps failed (${res.status})`);
+  return (await res.json()).notes_timestamped;
+};
+
 export const createWebSocket = (onMessage, onOpen, onClose) => {
   const ws = new WebSocket(WS_URL);
   ws.onopen = () => onOpen && onOpen();
