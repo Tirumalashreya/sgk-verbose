@@ -208,7 +208,9 @@ export function VerseBlock({ c, text, original, reference, type }) {
       )}
       {!!(refText || reference) && (
         <View style={{ flexDirection: 'row', marginTop: 8 }}>
-          <Chip c={c} tone="ok" icon="check">{refText || reference}</Chip>
+          {/* The number alone (e.g. "…1062") reads as a cryptic code — say plainly that it's
+             a real pasuram checked against the source collection, not a guess or an id. */}
+          <Chip c={c} tone="ok" icon="check">{`ధృవీకరించిన పాశురం · ${refText || reference}`}</Chip>
         </View>
       )}
     </View>

@@ -25,13 +25,20 @@ function buildHTML(session, forPrint = false) {
   const notes   = session.notes || session.transcript || '';   // the notes are the full verbatim transcript
   const shlokas = session.shlokas || [];
 
-  const shlokaRows = shlokas.map((s, i) => `
+  const shlokaRows = shlokas.map((s, i) => {
+    // "original" carries " · <collection> <number>" when it's a confirmed library match — the
+    // number alone reads as a cryptic code, so say plainly it's a real pasuram checked against
+    // the source collection, not a guess (mirrors kit.js's VerseBlock, same reasoning).
+    const [origText, refText] = (s.original || '').split(' · ');
+    return `
     <div class="shloka">
       <span class="shloka-label">${esc((s.type || 'Shloka').toUpperCase())} ${i + 1}${s.language ? ' · ' + esc(s.language) : ''}</span>
       <p class="shloka-text">${esc(s.text)}</p>
-      ${s.original ? `<p class="shloka-original">${esc(s.original)}</p>` : ''}
+      ${origText ? `<p class="shloka-original">${esc(origText)}</p>` : ''}
+      ${refText ? `<p class="shloka-original"><em>ధృవీకరించిన పాశురం · ${esc(refText)}</em></p>` : ''}
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   const noteBlocks = notes.split('\n').map(line => {
     const t = line.trim();
