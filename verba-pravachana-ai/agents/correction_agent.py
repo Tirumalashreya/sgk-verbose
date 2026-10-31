@@ -42,6 +42,31 @@ def _apply_term_fixes(text: str) -> tuple[str, int]:
     return text, total
 
 
+# The speaker uses "bracket lo" / "bracket open" ... "bracket close" as a
+# spoken instruction, not as words meant to appear in the notes — a dictation
+# convention, like saying "comma" or "new paragraph". Pure find-and-replace,
+# same as the term fixes above: a fixed phrase is recognized and swapped for
+# the punctuation it stands for. Nothing in between is read, touched, or
+# reasoned about — whatever the speaker says there passes through completely
+# unchanged, now sitting inside real parentheses instead of the spoken words
+# that used to mark its boundaries. No model sees this text, so there is
+# nothing here that can invent or drop anything.
+#
+# "బ్రాకెట్" is the everyday Telugu spelling of this English loanword (how it
+# appears in ordinary Telugu writing) — not yet checked against this
+# speaker's own transcribed audio, since no example exists yet. If the ASR
+# renders it differently, this simply won't match anything; add the real
+# spelling here once a recording that uses it has been seen.
+_BRACKET_OPEN = re.compile(_W + r'బ్రాకెట్\s*(లో|ఓపెన్)' + _E)
+_BRACKET_CLOSE = re.compile(_W + r'బ్రాకెట్\s*క్లోజ్' + _E)
+
+
+def _apply_bracket_commands(text: str) -> tuple[str, int]:
+    text, n_open = _BRACKET_OPEN.subn('(', text)
+    text, n_close = _BRACKET_CLOSE.subn(')', text)
+    return text, n_open + n_close
+
+
 def correction_agent(state: VerbaState) -> VerbaState:
     transcript = state.get("transcript", "") or ""
 
@@ -51,6 +76,10 @@ def correction_agent(state: VerbaState) -> VerbaState:
 
     state["raw_transcript"] = transcript
     fixed, n = _apply_term_fixes(transcript)
+    fixed, n_brackets = _apply_bracket_commands(fixed)
+    n += n_brackets
+    if n_brackets:
+        print(f"[correction] converted {n_brackets} spoken bracket instruction(s)")
     if n:
         print(f"[correction] applied {n} term fix(es)")
         state["transcript"] = fixed
