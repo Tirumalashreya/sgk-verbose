@@ -53,7 +53,7 @@ export const T = {
   // The notes body specifically — bigger and bold, by request. Detected
   // verses must stay exactly as they already were, so this is deliberately
   // its own token, not a change to `read` (which other screens still use).
-  readBig:   { fontFamily: F.readBold, fontSize: 20, lineHeight: 38 },
+  readBig:   { fontFamily: F.readBold, fontSize: 24, lineHeight: 42 },
   verse:     { fontFamily: F.readMed, fontSize: 17, lineHeight: 32 },
   verseDev:  { fontFamily: F.dev, fontSize: 16, lineHeight: 30 },
   verseTa:   { fontFamily: F.tamil, fontSize: 15, lineHeight: 28 },

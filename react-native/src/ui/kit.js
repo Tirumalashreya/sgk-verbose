@@ -279,7 +279,7 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
               if (p.kind === 'text') return p.text;
               const { primary, bracket } = teluguFirst(p.text, p.original);
               return (
-                <Text key={j} style={{ fontFamily: F.readMed, fontSize: T.read.fontSize, color: c.brass }}>
+                <Text key={j} style={{ fontFamily: F.readBold, fontSize: T.read.fontSize, color: c.brass }}>
                   {primary}{bracket ? ` (${bracket})` : ''}
                 </Text>
               );

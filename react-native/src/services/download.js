@@ -73,12 +73,15 @@ function buildHTML(session, forPrint = false) {
     .section    { margin-bottom: 36px; }
     .section-title { font-size: 13px; letter-spacing: 2px; color: #b58a3c; text-transform: uppercase; border-bottom: 1px solid #e3d4b2; padding-bottom: 6px; margin-bottom: 16px; }
     h3          { font-size: 16px; color: #7a2e25; margin: 20px 0 6px; }
-    p           { font-size: 15px; margin: 0 0 12px; }
+    /* Notes body: bigger, bold, near-black, by request. Detected verses (the
+       boxed ones below and the inline ones mixed into these paragraphs) are
+       explicitly kept at their original size/weight, not inherited from this. */
+    p           { font-size: 24px; font-weight: 700; color: #140F0A; line-height: 1.7; margin: 0 0 16px; }
     .shloka     { border-left: 2px solid #e0843b; padding-left: 14px; margin-bottom: 22px; }
     .shloka-label { font-size: 10px; letter-spacing: 1.5px; color: #b58a3c; display: block; margin-bottom: 4px; }
-    .shloka-text  { font-size: 15px; color: #5b513f; margin: 0 0 6px; }
-    .shloka-original { font-size: 15px; color: #7a2e25; margin: 0; }
-    .verse-inline { font-weight: 600; color: #7a2e25; }
+    .shloka-text  { font-size: 15px; font-weight: 400; color: #5b513f; margin: 0 0 6px; }
+    .shloka-original { font-size: 15px; font-weight: 400; color: #7a2e25; margin: 0; }
+    .verse-inline { font-size: 15px; font-weight: 700; color: #7a2e25; }
     ${forPrint ? '@media print { body { margin: 20px; } }' : ''}
   </style>
 </head>
