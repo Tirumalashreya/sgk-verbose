@@ -116,18 +116,19 @@ export async function downloadPDF(session) {
   }
   const Print = await import('expo-print');
   const Sharing = await import('expo-sharing');
-  // The new File/Directory class API (expo-file-system's main export, fresh
-  // on SDK 58) rejected here with no usable reason given — twice, first
-  // Sharing.shareAsync on the raw expo-print path, then FileSystemFile.copy
-  // when copying it first. The legacy module's copyAsync (same plain
-  // from/to-string shape this project has used reliably for years, long
-  // before SDK 58) sidesteps whatever's unsettled in the new API right now.
   const FileSystemLegacy = await import('expo-file-system/legacy');
   const { uri } = await Print.printToFileAsync({ html });
   const destUri = FileSystemLegacy.cacheDirectory + fileName(session, 'pdf');
-  const info = await FileSystemLegacy.getInfoAsync(destUri);
-  if (info.exists) await FileSystemLegacy.deleteAsync(destUri, { idempotent: true });
-  await FileSystemLegacy.copyAsync({ from: uri, to: destUri });
+  // Both a file-to-file copy (the new File/Directory class API, then the
+  // legacy copyAsync) failed reading expo-print's own output on Android, with
+  // the real reason finally visible: "java.io.IOException: Location
+  // '.../cache/Print/<uuid>.pdf' isn't readable." — the file expo-print just
+  // wrote, unreadable to a direct file-copy immediately after. Reading it as
+  // base64 text instead of copying the file handle goes through a different
+  // native code path (a content stream, not a raw file-to-file copy), which
+  // Expo's own community has used as a workaround for exactly this.
+  const base64 = await FileSystemLegacy.readAsStringAsync(uri, { encoding: 'base64' });
+  await FileSystemLegacy.writeAsStringAsync(destUri, base64, { encoding: 'base64' });
   await Sharing.shareAsync(destUri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileName(session, 'pdf') });
 }
 
