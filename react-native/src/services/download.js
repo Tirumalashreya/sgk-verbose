@@ -21,7 +21,6 @@ function teluguFirst(text, original) {
 
 function buildHTML(session, forPrint = false) {
   const title   = esc(session.title || 'Pravachanam');
-  const summary = esc(session.summary || '');
   const notes   = session.notes || session.transcript || '';   // the notes are the full verbatim transcript
   const shlokas = session.shlokas || [];
 
@@ -86,7 +85,6 @@ function buildHTML(session, forPrint = false) {
 <body>
   <h1>${title}</h1>
   <p class="meta">${ACHARYA}</p>
-  ${summary ? `<div class="summary">${summary}</div>` : ''}
 
   ${notes ? `
   <div class="section">

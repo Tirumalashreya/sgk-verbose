@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
 import { useTheme, F, T, S, R } from '../theme';
-import { Screen, Enter, IconButton, Chip, Overline, Button, ReadingText, VerseBlock, sessionStatus } from '../ui/kit';
+import { Screen, Enter, IconButton, Chip, Button, ReadingText, VerseBlock, sessionStatus } from '../ui/kit';
 import { getSessions, getTimestampedNotes, updateNotes } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
 import { notify, choose } from '../services/platform';
@@ -134,13 +134,6 @@ export default function ReadingScreen({ go, back, t, session: given }) {
         </Pressable>
       )}
 
-      {!!session.summary && (
-        <View style={[st.summary, { borderColor: c.line }]}>
-          <Overline c={c}>{t('summary')}</Overline>
-          <Text selectable style={[T.read, { color: c.inkSoft, fontSize: 15.5, lineHeight: 29, marginTop: S.s }]}>{session.summary}</Text>
-        </View>
-      )}
-
       <View style={[st.tabs, { borderColor: c.line, backgroundColor: c.surface }]} accessibilityRole="tablist">
         {tabs.map(([id, label]) => {
           const on = tab === id;
@@ -210,7 +203,6 @@ const st = StyleSheet.create({
   meta: { flexDirection: 'row', alignItems: 'center', gap: S.s, marginTop: S.s, flexWrap: 'wrap' },
   review: { marginTop: S.xl, borderWidth: 1, borderRadius: R.panel, padding: S.l },
   spot: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: S.m, paddingTop: S.m, gap: 4 },
-  summary: { marginTop: S.xl, borderLeftWidth: 2, paddingLeft: S.l, paddingVertical: S.xs },
   tabs: { flexDirection: 'row', marginTop: S.xxl, borderWidth: StyleSheet.hairlineWidth, borderRadius: R.control, padding: 4 },
   tab: { flex: 1, minHeight: 44, borderRadius: R.control - 2, borderWidth: 1, borderColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
   editInput: { minHeight: 320, borderWidth: 1, borderRadius: R.panel, padding: S.l, textAlignVertical: 'top' },
