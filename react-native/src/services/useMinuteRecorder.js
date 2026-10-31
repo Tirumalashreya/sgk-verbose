@@ -1,14 +1,17 @@
 // Records the microphone in one-minute pieces (each uploaded as it finishes),
 // and exposes the live voice level for visuals. Works on iOS, Android and web.
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import {
   useAudioRecorder, useAudioRecorderState, RecordingPresets,
   requestRecordingPermissionsAsync, setAudioModeAsync,
 } from 'expo-audio';
 
 const PIECE_MS = 60000;
+const isWeb = Platform.OS === 'web';
 
-export function useMinuteRecorder(onPiece) {
+// ── Native (iOS / Android): expo-audio's own recorder, unchanged ───────────
+function useNativeMinuteRecorder(onPiece) {
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const state = useAudioRecorderState(recorder, 80);
   const running = useRef(false);
@@ -42,7 +45,6 @@ export function useMinuteRecorder(onPiece) {
     timer.current = setTimeout(() => cutPiece(false), PIECE_MS);
   };
 
-  /** Stops and resolves only after the last piece has been uploaded. */
   const stop = async () => {
     running.current = false;
     clearTimeout(timer.current);
@@ -52,4 +54,124 @@ export function useMinuteRecorder(onPiece) {
   // metering is dBFS (about -160 silence … 0 loudest); 0–1 is easier to animate
   const level = state.metering == null ? 0 : Math.max(0, Math.min(1, (state.metering + 60) / 60));
   return { start, stop, level, isRecording: !!state.isRecording, durationMillis: state.durationMillis || 0 };
+}
+
+// ── Web: a raw MediaRecorder, kept open for the whole recording ────────────
+// expo-audio's web recorder tears the microphone down and re-acquires it with
+// a fresh getUserMedia() call every single minute (see prepareToRecordAsync →
+// createMediaRecorder in its source). Repeatedly releasing and re-grabbing a
+// hardware device races with the browser's own cleanup — the next minute's
+// recording can start before real audio is flowing, producing a near-empty
+// piece (confirmed: every other minute came back as a ~110-byte stub, just
+// the WebM container, no audio). The mic is never released here until Stop,
+// so there's nothing to race.
+function useWebMinuteRecorder(onPiece) {
+  const streamRef = useRef(null);
+  const recorderRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const analyserRef = useRef(null);
+  const meterBuf = useRef(null);
+  const rafId = useRef(null);
+  const running = useRef(false);
+  const chain = useRef(Promise.resolve());   // pieces are uploaded strictly in order
+  const startedAt = useRef(0);
+  const [level, setLevel] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
+  const [durationMillis, setDurationMillis] = useState(0);
+
+  const pollMeter = () => {
+    const analyser = analyserRef.current;
+    if (analyser) {
+      if (!meterBuf.current || meterBuf.current.length !== analyser.fftSize) {
+        meterBuf.current = new Float32Array(analyser.fftSize);
+      }
+      analyser.getFloatTimeDomainData(meterBuf.current);
+      let sumSquares = 0;
+      for (const sample of meterBuf.current) sumSquares += sample * sample;
+      const rms = Math.sqrt(sumSquares / meterBuf.current.length);
+      // Same RMS-to-dBFS formula expo-audio itself uses natively, so the
+      // waveform reads the same as it did before this change.
+      const dbfs = rms === 0 ? -160 : 20 * Math.log10(rms);
+      setLevel(Math.max(0, Math.min(1, (dbfs + 60) / 60)));
+      setDurationMillis(Date.now() - startedAt.current);
+    }
+    rafId.current = requestAnimationFrame(pollMeter);
+  };
+
+  const teardown = () => {
+    cancelAnimationFrame(rafId.current);
+    rafId.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
+    analyserRef.current = null;
+  };
+
+  const start = async () => {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      throw new Error('mic-denied');
+    }
+    streamRef.current = stream;
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioContextClass();
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+    audioCtxRef.current = ctx;
+    analyserRef.current = analyser;
+
+    const mimeType = typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('audio/webm')
+      ? 'audio/webm' : '';
+    const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), bitsPerSecond: 128000 });
+    recorderRef.current = recorder;
+
+    recorder.ondataavailable = (e) => {
+      if (!e.data || e.data.size === 0) return;
+      const uri = URL.createObjectURL(e.data);
+      const isLast = !running.current;
+      // strictly in order, and Stop can await the very last one
+      chain.current = chain.current.then(() => onPiece(uri, isLast));
+    };
+
+    // A timeslice makes the browser fire ondataavailable every minute on its
+    // own — no stop()/start() cycle, so the microphone is never let go of
+    // until the whole recording ends.
+    recorder.start(PIECE_MS);
+    running.current = true;
+    setIsRecording(true);
+    startedAt.current = Date.now();
+    rafId.current = requestAnimationFrame(pollMeter);
+  };
+
+  /** Stops and resolves only after the last piece has been uploaded. */
+  const stop = async () => {
+    running.current = false;
+    setIsRecording(false);
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      await new Promise((resolve) => {
+        recorder.addEventListener('stop', resolve, { once: true });
+        recorder.stop();   // fires one final ondataavailable first, then 'stop'
+      });
+    }
+    teardown();
+    await chain.current;
+  };
+
+  useEffect(() => () => teardown(), []);   // release the mic if the screen unmounts mid-recording
+
+  return { start, stop, level, isRecording, durationMillis };
+}
+
+export function useMinuteRecorder(onPiece) {
+  // isWeb is a fixed platform constant — this never changes across renders
+  // for a running app instance, so branching which hook runs here is safe.
+  return isWeb ? useWebMinuteRecorder(onPiece) : useNativeMinuteRecorder(onPiece);
 }
