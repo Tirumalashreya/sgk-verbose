@@ -79,7 +79,7 @@ function buildHTML(session, forPrint = false) {
     p           { font-size: 24px; font-weight: 700; color: #140F0A; line-height: 1.7; margin: 0 0 16px; }
     .shloka     { border-left: 2px solid #e0843b; padding-left: 14px; margin-bottom: 22px; }
     .shloka-label { font-size: 10px; letter-spacing: 1.5px; color: #b58a3c; display: block; margin-bottom: 4px; }
-    .shloka-text  { font-size: 15px; font-weight: 400; color: #5b513f; margin: 0 0 6px; }
+    .shloka-text  { font-size: 15px; font-weight: 700; color: #5b513f; margin: 0 0 6px; }
     .shloka-original { font-size: 15px; font-weight: 400; color: #7a2e25; margin: 0; }
     .verse-inline { font-size: 15px; font-weight: 700; color: #7a2e25; }
     ${forPrint ? '@media print { body { margin: 20px; } }' : ''}

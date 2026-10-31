@@ -54,7 +54,7 @@ export const T = {
   // verses must stay exactly as they already were, so this is deliberately
   // its own token, not a change to `read` (which other screens still use).
   readBig:   { fontFamily: F.readBold, fontSize: 24, lineHeight: 42 },
-  verse:     { fontFamily: F.readMed, fontSize: 17, lineHeight: 32 },
+  verse:     { fontFamily: F.readBold, fontSize: 17, lineHeight: 32 },
   verseDev:  { fontFamily: F.dev, fontSize: 16, lineHeight: 30 },
   verseTa:   { fontFamily: F.tamil, fontSize: 15, lineHeight: 28 },
   label:     { fontFamily: F.uiSemi, fontSize: 13, lineHeight: 18, letterSpacing: 0.3 },
