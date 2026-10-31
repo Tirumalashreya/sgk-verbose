@@ -65,6 +65,16 @@ function useNativeMinuteRecorder(onPiece) {
 // piece (confirmed: every other minute came back as a ~110-byte stub, just
 // the WebM container, no audio). The mic is never released here until Stop,
 // so there's nothing to race.
+//
+// One thing this still needs to get right: MediaRecorder's start(timeslice)
+// writes the WebM file header into only the *first* chunk — every chunk
+// after that is a continuation fragment with no header of its own, invalid
+// as a standalone file (confirmed: ffmpeg's "EBML header parsing failed" on
+// every piece after the first, when this used start(PIECE_MS)). So each
+// minute instead gets its own start()/stop() cycle on the one persistent
+// stream — the mic connection itself is never touched between pieces, only
+// the recorder is stopped and restarted on top of it, and stop() always
+// produces one complete, independent, valid file.
 function useWebMinuteRecorder(onPiece) {
   const streamRef = useRef(null);
   const recorderRef = useRef(null);
@@ -73,7 +83,8 @@ function useWebMinuteRecorder(onPiece) {
   const meterBuf = useRef(null);
   const rafId = useRef(null);
   const running = useRef(false);
-  const chain = useRef(Promise.resolve());   // pieces are uploaded strictly in order
+  const timer = useRef(null);
+  const chain = useRef(Promise.resolve());   // pieces are cut and uploaded strictly in order
   const startedAt = useRef(0);
   const [level, setLevel] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
@@ -108,6 +119,41 @@ function useWebMinuteRecorder(onPiece) {
     analyserRef.current = null;
   };
 
+  const mimeTypeRef = useRef('');
+
+  const newRecorderOnTheOpenStream = () => {
+    const recorder = new MediaRecorder(streamRef.current, {
+      ...(mimeTypeRef.current ? { mimeType: mimeTypeRef.current } : {}), bitsPerSecond: 128000,
+    });
+    recorder.ondataavailable = (e) => {
+      if (!e.data || e.data.size === 0) return;
+      const uri = URL.createObjectURL(e.data);
+      const isLast = !running.current;
+      // strictly in order, and Stop can await the very last one
+      chain.current = chain.current.then(() => onPiece(uri, isLast));
+    };
+    return recorder;
+  };
+
+  /** Ends the current minute's recording (one complete file) and, unless this
+   * is the last piece, starts the next minute on the same open stream. */
+  const cutPiece = (isLast) => {
+    chain.current = chain.current.then(() => new Promise((resolve) => {
+      const recorder = recorderRef.current;
+      if (!recorder || recorder.state === 'inactive') { resolve(); return; }
+      recorder.addEventListener('stop', () => {
+        if (running.current && !isLast) {
+          recorderRef.current = newRecorderOnTheOpenStream();
+          recorderRef.current.start();
+          timer.current = setTimeout(() => cutPiece(false), PIECE_MS);
+        }
+        resolve();
+      }, { once: true });
+      recorder.stop();   // fires one ondataavailable (the complete piece), then 'stop'
+    }));
+    return chain.current;
+  };
+
   const start = async () => {
     let stream;
     try {
@@ -127,24 +173,12 @@ function useWebMinuteRecorder(onPiece) {
     audioCtxRef.current = ctx;
     analyserRef.current = analyser;
 
-    const mimeType = typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('audio/webm')
+    mimeTypeRef.current = typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('audio/webm')
       ? 'audio/webm' : '';
-    const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), bitsPerSecond: 128000 });
-    recorderRef.current = recorder;
-
-    recorder.ondataavailable = (e) => {
-      if (!e.data || e.data.size === 0) return;
-      const uri = URL.createObjectURL(e.data);
-      const isLast = !running.current;
-      // strictly in order, and Stop can await the very last one
-      chain.current = chain.current.then(() => onPiece(uri, isLast));
-    };
-
-    // A timeslice makes the browser fire ondataavailable every minute on its
-    // own — no stop()/start() cycle, so the microphone is never let go of
-    // until the whole recording ends.
-    recorder.start(PIECE_MS);
     running.current = true;
+    recorderRef.current = newRecorderOnTheOpenStream();
+    recorderRef.current.start();   // no timeslice — one complete file per start()/stop() cycle
+    timer.current = setTimeout(() => cutPiece(false), PIECE_MS);
     setIsRecording(true);
     startedAt.current = Date.now();
     rafId.current = requestAnimationFrame(pollMeter);
@@ -154,15 +188,9 @@ function useWebMinuteRecorder(onPiece) {
   const stop = async () => {
     running.current = false;
     setIsRecording(false);
-    const recorder = recorderRef.current;
-    if (recorder && recorder.state !== 'inactive') {
-      await new Promise((resolve) => {
-        recorder.addEventListener('stop', resolve, { once: true });
-        recorder.stop();   // fires one final ondataavailable first, then 'stop'
-      });
-    }
+    clearTimeout(timer.current);
+    await cutPiece(true);
     teardown();
-    await chain.current;
   };
 
   useEffect(() => () => teardown(), []);   // release the mic if the screen unmounts mid-recording
