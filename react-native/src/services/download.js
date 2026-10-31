@@ -118,8 +118,16 @@ export async function downloadPDF(session) {
   }
   const Print = await import('expo-print');
   const Sharing = await import('expo-sharing');
+  const { File, Paths } = await import('expo-file-system');
   const { uri } = await Print.printToFileAsync({ html });
-  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileName(session, 'pdf') });
+  // expo-print's file isn't always somewhere expo-sharing is allowed to read
+  // across the app boundary ("ExpoSharing.shareAsync has been rejected" on
+  // SDK 58) — copying it into the app's own cache dir first, the same place
+  // the Word export already uses, is the documented fix for this.
+  const dest = new File(Paths.cache, fileName(session, 'pdf'));
+  if (dest.exists) dest.delete();
+  await new File(uri).copy(dest);
+  await Sharing.shareAsync(dest.uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileName(session, 'pdf') });
 }
 
 export async function downloadDOC(session) {
