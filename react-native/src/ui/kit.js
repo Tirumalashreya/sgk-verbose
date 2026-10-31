@@ -264,25 +264,29 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
     para.push(line.replace(/\*\*/g, ''));
   }
   flush();
-  const baseStyle = roman ? { fontFamily: F.ui, fontSize: 16.5, lineHeight: 28 } : T.read;
+  // Bigger, bold, near-black for the notes body, by request — detected verses
+  // (both the boxed ones, a separate component entirely, and inline ones
+  // right below) must stay exactly as they already were, not inherit this.
+  const baseStyle = roman ? { fontFamily: F.ui, fontSize: 16.5, lineHeight: 28 } : T.readBig;
+  const bodyColor = roman ? c.ink : '#140F0A';
   return (
     <View style={{ gap: S.l }}>
       {blocks.map((b, i) => {
         if (b.kind === 'verse') return <VerseBlock key={i} c={c} text={b.text} original={b.original} type={b.type} />;
         if (b.kind === 'p-inline') return (
-          <Text key={i} selectable style={[baseStyle, { color: c.ink }]}>
+          <Text key={i} selectable style={[baseStyle, { color: bodyColor }]}>
             {b.parts.map((p, j) => {
               if (p.kind === 'text') return p.text;
               const { primary, bracket } = teluguFirst(p.text, p.original);
               return (
-                <Text key={j} style={{ fontFamily: F.readMed, color: c.brass }}>
+                <Text key={j} style={{ fontFamily: F.readMed, fontSize: T.read.fontSize, color: c.brass }}>
                   {primary}{bracket ? ` (${bracket})` : ''}
                 </Text>
               );
             })}
           </Text>
         );
-        return <Text key={i} selectable style={[baseStyle, { color: c.ink }]}>{b.text}</Text>;
+        return <Text key={i} selectable style={[baseStyle, { color: bodyColor }]}>{b.text}</Text>;
       })}
     </View>
   );

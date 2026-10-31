@@ -6,7 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts, Marcellus_400Regular } from '@expo-google-fonts/marcellus';
 import { HankenGrotesk_400Regular, HankenGrotesk_500Medium, HankenGrotesk_600SemiBold, HankenGrotesk_700Bold } from '@expo-google-fonts/hanken-grotesk';
 import { NotoSerifDevanagari_500Medium } from '@expo-google-fonts/noto-serif-devanagari';
-import { NotoSerifTelugu_400Regular, NotoSerifTelugu_500Medium } from '@expo-google-fonts/noto-serif-telugu';
+import { NotoSerifTelugu_400Regular, NotoSerifTelugu_500Medium, NotoSerifTelugu_700Bold } from '@expo-google-fonts/noto-serif-telugu';
 import { NotoSerifTamil_500Medium } from '@expo-google-fonts/noto-serif-tamil';
 import { Suravaram_400Regular } from '@expo-google-fonts/suravaram';
 
@@ -30,7 +30,7 @@ export default function App() {
   const [fontsLoaded] = useFonts({
     Marcellus_400Regular, Suravaram_400Regular,
     HankenGrotesk_400Regular, HankenGrotesk_500Medium, HankenGrotesk_600SemiBold, HankenGrotesk_700Bold,
-    NotoSerifTelugu_400Regular, NotoSerifTelugu_500Medium, NotoSerifDevanagari_500Medium, NotoSerifTamil_500Medium,
+    NotoSerifTelugu_400Regular, NotoSerifTelugu_500Medium, NotoSerifTelugu_700Bold, NotoSerifDevanagari_500Medium, NotoSerifTamil_500Medium,
   });
   const [ready, setReady] = useState(false);
   const [showIntro, setShowIntro] = useState(true);   // the photo page opens every launch

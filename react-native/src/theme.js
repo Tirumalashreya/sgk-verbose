@@ -34,6 +34,7 @@ export const F = {
   displayTe: 'Suravaram_400Regular',
   read: 'NotoSerifTelugu_400Regular',
   readMed: 'NotoSerifTelugu_500Medium',
+  readBold: 'NotoSerifTelugu_700Bold',
   dev: 'NotoSerifDevanagari_500Medium',
   tamil: 'NotoSerifTamil_500Medium',
   ui: 'HankenGrotesk_400Regular',
@@ -49,6 +50,10 @@ export const T = {
   title:     { fontFamily: F.display, fontSize: 21, lineHeight: 28 },
   titleTe:   { fontFamily: F.readMed, fontSize: 19, lineHeight: 30 },
   read:      { fontFamily: F.read, fontSize: 17, lineHeight: 33 },
+  // The notes body specifically — bigger and bold, by request. Detected
+  // verses must stay exactly as they already were, so this is deliberately
+  // its own token, not a change to `read` (which other screens still use).
+  readBig:   { fontFamily: F.readBold, fontSize: 20, lineHeight: 38 },
   verse:     { fontFamily: F.readMed, fontSize: 17, lineHeight: 32 },
   verseDev:  { fontFamily: F.dev, fontSize: 16, lineHeight: 30 },
   verseTa:   { fontFamily: F.tamil, fontSize: 15, lineHeight: 28 },
