@@ -299,6 +299,31 @@ async def get_timestamps(session_id: str, force: bool = False):
     return {"notes_timestamped": out}
 
 
+class UpdateNotesRequest(BaseModel):
+    notes: str
+
+
+@app.put("/sessions/{session_id}/notes")
+async def update_notes(session_id: str, data: UpdateNotesRequest):
+    """A manual correction from the Reading screen's edit mode. Replaces the
+    notes text outright — no re-validation, this is a human overriding the
+    pipeline's output on purpose. Clears any cached timestamped version,
+    since it was built from the text before this edit and would no longer
+    line up; the next request for it rebuilds fresh."""
+    from fastapi import HTTPException
+    session = next((s for s in sessions_store if s.get("id") == session_id), None)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session["notes"] = data.notes
+    session["enhanced_notes"] = data.notes
+    session["edited"] = True
+    session.pop("notes_timestamped", None)
+    _save_sessions()
+    _broadcast({"type": "chunk_complete", "chunk_index": session.get("chunk_index", 0),
+                "title": session.get("title"), "notes": data.notes})
+    return {"status": "saved"}
+
+
 @app.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
     global sessions_store

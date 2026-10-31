@@ -1,10 +1,10 @@
 // Reading — the complete verbatim notes, calm and legible. Follows the phone's
 // light/dark setting (Manuscript by day, Hall at night).
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
 import { useTheme, F, T, S, R } from '../theme';
-import { Screen, Enter, IconButton, Chip, Overline, ReadingText, VerseBlock, sessionStatus } from '../ui/kit';
-import { getSessions, getTimestampedNotes } from '../services/api';
+import { Screen, Enter, IconButton, Chip, Overline, Button, ReadingText, VerseBlock, sessionStatus } from '../ui/kit';
+import { getSessions, getTimestampedNotes, updateNotes } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
 import { notify, choose } from '../services/platform';
 
@@ -18,6 +18,9 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   // 'idle' | 'loading' | 'ready' | 'unavailable' | 'error'
   const [tsStatus, setTsStatus] = useState('idle');
   const [tsNotes, setTsNotes] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (given) { setSession(given); return; }
@@ -50,6 +53,22 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   };
   const selectTab = (id) => { setTab(id); if (id === 'timestamps') loadTimestamps(); };
 
+  const startEdit = () => { setDraft(session.notes || session.transcript || ''); setEditing(true); };
+  const cancelEdit = () => setEditing(false);
+  const saveEdit = async () => {
+    setSaving(true);
+    try {
+      await updateNotes(session.id, draft);
+      setSession((s) => ({ ...s, notes: draft, enhanced_notes: draft, edited: true }));
+      setTsStatus('idle'); setTsNotes(null);   // the cached timestamped version no longer matches
+      setEditing(false);
+    } catch (e) {
+      notify(t('edit'), String(e.message) || t('editFailed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const exportAs = async (kind) => {
     const withTimestamps = await choose(t('exportTimestampTitle'), t('exportTimestampHint'),
       t('exportWithTimestamps'), t('exportPlain'));
@@ -72,14 +91,21 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   return (
     <Screen c={c}>
       <View style={st.bar}>
-        <IconButton c={c} icon="back" label={t('back')} onPress={() => back() || go('history')} />
+        <IconButton c={c} icon="back" label={t('back')} onPress={() => (editing ? cancelEdit() : (back() || go('history')))} />
         <View style={{ flexDirection: 'row' }}>
-          <Pressable onPress={() => exportAs('pdf')} accessibilityRole="button" accessibilityLabel={`${t('exportPdf')} export`} style={st.export}>
-            <Text style={[T.label, { color: c.brass }]}>{t('exportPdf')}</Text>
-          </Pressable>
-          <Pressable onPress={() => exportAs('doc')} accessibilityRole="button" accessibilityLabel={`${t('exportDoc')} export`} style={st.export}>
-            <Text style={[T.label, { color: c.brass }]}>{t('exportDoc')}</Text>
-          </Pressable>
+          {tab === 'notes' && !editing && (
+            <Pressable onPress={startEdit} accessibilityRole="button" accessibilityLabel={`${t('edit')} ${t('notes')}`} style={st.export}>
+              <Text style={[T.label, { color: c.brass }]}>{t('edit')}</Text>
+            </Pressable>
+          )}
+          {!editing && <>
+            <Pressable onPress={() => exportAs('pdf')} accessibilityRole="button" accessibilityLabel={`${t('exportPdf')} export`} style={st.export}>
+              <Text style={[T.label, { color: c.brass }]}>{t('exportPdf')}</Text>
+            </Pressable>
+            <Pressable onPress={() => exportAs('doc')} accessibilityRole="button" accessibilityLabel={`${t('exportDoc')} export`} style={st.export}>
+              <Text style={[T.label, { color: c.brass }]}>{t('exportDoc')}</Text>
+            </Pressable>
+          </>}
         </View>
       </View>
 
@@ -128,7 +154,37 @@ export default function ReadingScreen({ go, back, t, session: given }) {
       </View>
 
       <View style={{ marginTop: S.xl }}>
-        {tab === 'notes' && <ReadingText c={c} notes={session.notes || session.transcript} shlokas={shlokas} typeLabel={t('verseType')} />}
+        {tab === 'notes' && editing && (
+          <View style={{ gap: S.m }}>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              autoFocus
+              autoCorrect={false}
+              autoCapitalize="none"
+              spellCheck={false}
+              // lang hints the OS toward a Telugu input/spell-check where it can act on it —
+              // it cannot make a Telugu keyboard appear on a device that doesn't have one
+              // installed; that switch is the phone's own keyboard picker, outside any app's reach.
+              lang="te"
+              accessibilityLabel={t('notes')}
+              style={[T.read, st.editInput, { color: c.ink, borderColor: c.brass, backgroundColor: c.surface }]}
+            />
+            <View style={{ flexDirection: 'row', gap: S.s }}>
+              <Button c={c} variant="quiet" label={t('editCancel')} onPress={cancelEdit} style={{ flex: 1 }} disabled={saving} />
+              <Button c={c} variant="brass" label={saving ? t('editSaved') + '…' : t('editSave')} onPress={saveEdit} style={{ flex: 1 }} disabled={saving} />
+            </View>
+          </View>
+        )}
+        {tab === 'notes' && !editing && (
+          <View style={{ gap: S.m }}>
+            {session.edited && (
+              <View style={{ flexDirection: 'row' }}><Chip c={c} tone="ok" icon="check">{t('editedBadge')}</Chip></View>
+            )}
+            <ReadingText c={c} notes={session.notes || session.transcript} shlokas={shlokas} typeLabel={t('verseType')} />
+          </View>
+        )}
         {tab === 'roman' && <ReadingText c={c} notes={session.transliterated_notes || ''} shlokas={shlokas} roman typeLabel={t('verseType')} />}
         {tab === 'verses' && (shlokas.length === 0
           ? <Text style={[T.body, { color: c.muted }]}>{t('noVerses')}</Text>
@@ -157,4 +213,5 @@ const st = StyleSheet.create({
   summary: { marginTop: S.xl, borderLeftWidth: 2, paddingLeft: S.l, paddingVertical: S.xs },
   tabs: { flexDirection: 'row', marginTop: S.xxl, borderWidth: StyleSheet.hairlineWidth, borderRadius: R.control, padding: 4 },
   tab: { flex: 1, minHeight: 44, borderRadius: R.control - 2, borderWidth: 1, borderColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
+  editInput: { minHeight: 320, borderWidth: 1, borderRadius: R.panel, padding: S.l, textAlignVertical: 'top' },
 });

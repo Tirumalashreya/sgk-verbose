@@ -65,6 +65,17 @@ export const uploadAudio = async (f, { live = false } = {}) => {
   return res.json();
 };
 
+/** A manual correction from the Reading screen's edit mode — replaces the
+ * notes text outright (a human override, never re-validated). */
+export const updateNotes = async (sessionId, notes) => {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/notes`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes }),
+  });
+  if (!res.ok) throw new Error(`save failed (${res.status})`);
+  return res.json();
+};
+
 export const deleteSession = async (sessionId) => {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
   return res.json();
