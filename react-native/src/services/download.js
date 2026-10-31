@@ -141,6 +141,6 @@ export async function downloadDOC(session) {
   const file = new File(Paths.cache, fileName(session, 'doc'));
   if (file.exists) file.delete();
   file.create();
-  file.write('\ufeff' + html);
+  await file.write('\ufeff' + html);   // SDK 58: File.write() is async now \u2014 unawaited, the share below could fire early
   await Sharing.shareAsync(file.uri, { mimeType: 'application/msword', UTI: 'com.microsoft.word.doc', dialogTitle: fileName(session, 'doc') });
 }
