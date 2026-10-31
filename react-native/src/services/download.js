@@ -116,16 +116,19 @@ export async function downloadPDF(session) {
   }
   const Print = await import('expo-print');
   const Sharing = await import('expo-sharing');
-  const { File, Paths } = await import('expo-file-system');
+  // The new File/Directory class API (expo-file-system's main export, fresh
+  // on SDK 58) rejected here with no usable reason given — twice, first
+  // Sharing.shareAsync on the raw expo-print path, then FileSystemFile.copy
+  // when copying it first. The legacy module's copyAsync (same plain
+  // from/to-string shape this project has used reliably for years, long
+  // before SDK 58) sidesteps whatever's unsettled in the new API right now.
+  const FileSystemLegacy = await import('expo-file-system/legacy');
   const { uri } = await Print.printToFileAsync({ html });
-  // expo-print's file isn't always somewhere expo-sharing is allowed to read
-  // across the app boundary ("ExpoSharing.shareAsync has been rejected" on
-  // SDK 58) — copying it into the app's own cache dir first, the same place
-  // the Word export already uses, is the documented fix for this.
-  const dest = new File(Paths.cache, fileName(session, 'pdf'));
-  if (dest.exists) dest.delete();
-  await new File(uri).copy(dest);
-  await Sharing.shareAsync(dest.uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileName(session, 'pdf') });
+  const destUri = FileSystemLegacy.cacheDirectory + fileName(session, 'pdf');
+  const info = await FileSystemLegacy.getInfoAsync(destUri);
+  if (info.exists) await FileSystemLegacy.deleteAsync(destUri, { idempotent: true });
+  await FileSystemLegacy.copyAsync({ from: uri, to: destUri });
+  await Sharing.shareAsync(destUri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileName(session, 'pdf') });
 }
 
 export async function downloadDOC(session) {
