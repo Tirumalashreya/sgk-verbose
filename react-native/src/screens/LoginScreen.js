@@ -3,9 +3,10 @@
 // device) and again any time a request comes back 401 — e.g. the password
 // was changed on the backend.
 import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
 import { useTheme, F, T, S, R } from '../theme';
 import { Screen, Enter, Button, Portrait } from '../ui/kit';
+import Icon from '../ui/Icon';
 import { tryLogin, saveCredentials } from '../services/api';
 
 const isTe = (s) => /[ఀ-౿]/.test(s || '');
@@ -16,6 +17,7 @@ export default function LoginScreen({ t, onLoggedIn }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const submit = async () => {
     const u = username.trim();
@@ -53,13 +55,20 @@ export default function LoginScreen({ t, onLoggedIn }) {
             autoCapitalize="none" autoCorrect={false}
             style={[st.input, { color: c.ink, borderColor: c.line, backgroundColor: c.surface }]}
           />
-          <TextInput
-            value={password} onChangeText={(v) => { setPassword(v); setError(''); }}
-            placeholder={t('password')} placeholderTextColor={c.muted}
-            secureTextEntry autoCapitalize="none" autoCorrect={false}
-            onSubmitEditing={submit}
-            style={[st.input, { color: c.ink, borderColor: c.line, backgroundColor: c.surface }]}
-          />
+          <View>
+            <TextInput
+              value={password} onChangeText={(v) => { setPassword(v); setError(''); }}
+              placeholder={t('password')} placeholderTextColor={c.muted}
+              secureTextEntry={!showPassword} autoCapitalize="none" autoCorrect={false}
+              onSubmitEditing={submit}
+              style={[st.input, { paddingRight: 48, color: c.ink, borderColor: c.line, backgroundColor: c.surface }]}
+            />
+            <Pressable onPress={() => setShowPassword((v) => !v)} hitSlop={8}
+              accessibilityRole="button" accessibilityLabel={showPassword ? t('hidePassword') : t('showPassword')}
+              style={st.eyeButton}>
+              <Icon name={showPassword ? 'eyeOff' : 'eye'} size={20} color={c.muted} />
+            </Pressable>
+          </View>
           {!!error && <Text style={[T.body, { color: c.kumkumText }]}>{error}</Text>}
           <Button c={c} label={busy ? t('loggingIn') : t('login')} variant="primary"
             disabled={busy || !username.trim() || !password} onPress={submit} />
@@ -72,4 +81,5 @@ export default function LoginScreen({ t, onLoggedIn }) {
 const st = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: S.xl },
   input: { minHeight: 52, borderRadius: R.control, borderWidth: 1, paddingHorizontal: S.l, fontSize: 16 },
+  eyeButton: { position: 'absolute', right: 2, top: 0, bottom: 0, width: 44, alignItems: 'center', justifyContent: 'center' },
 });
