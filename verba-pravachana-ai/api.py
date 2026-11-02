@@ -160,7 +160,15 @@ stop_event = threading.Event()
 sessions_store: list[dict] = _load_sessions()
 _pipeline_thread: threading.Thread | None = None
 _live_session_id: int = 0
-_pipeline_semaphore = threading.Semaphore(1)  # one pipeline at a time — Ollama is single-threaded
+# This used to be Semaphore(1) — one pipeline at a time — because the
+# pipeline ran against a local Ollama model, which genuinely needed
+# exclusive access to one GPU. That stopped being true once everything moved
+# to remote APIs (Gemini, Groq), which already handle their own concurrency
+# and rate limits internally — serializing on top of that just means one
+# slow or stuck recording blocks every other person using the app, with no
+# benefit. A real cap still matters (ffmpeg conversion and audio I/O run on
+# this one Mac's CPU, not a remote service), just a much higher one.
+_pipeline_semaphore = threading.Semaphore(int(os.getenv("MAX_CONCURRENT_PIPELINES", "8")))
 _live_recording_session: dict | None = None   # the mic recording currently being captured
 _live_lock = threading.Lock()                 # guards each live session's "pending" piece count
 _live_by_id: dict[str, dict] = {}            # mic recordings made since start-up, by id (for "continue")
@@ -539,12 +547,41 @@ def _session_from_result(result: dict, title: str | None, chunk_index: int, **ex
     }
 
 
+ERROR_LOG_FILE = "pipeline_errors.log"
+
+
 def _report_failure(e: Exception, chunk_index: int):
+    """This only fires once every retry and fallback this pipeline has has
+    already been exhausted (both Gemini providers down, or a genuine code
+    bug) — everything recoverable (a rate limit, one provider's billing
+    issue, a Groq key cooling down) is already handled further down and
+    never reaches here. So when it does fire, it's worth a real record: a
+    permanent log entry with the full traceback (for you to review later,
+    even if you're not watching this screen) and a native notification on
+    this Mac (since this is exactly where the backend runs) — while the
+    person actually using the app only ever sees a short, calm message, not
+    a stack trace."""
     import traceback
+    tb = traceback.format_exc()
     print(f"[PIPELINE ERROR] chunk {chunk_index}: {e}")
-    traceback.print_exc()
-    # Tell the app, so an upload never sits on "processing" after it has failed
-    _broadcast({"type": "pipeline_error", "chunk_index": chunk_index, "message": str(e)[:300]})
+    print(tb)
+    try:
+        with open(ERROR_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"\n{'=' * 70}\n{datetime.utcnow().isoformat()} — chunk {chunk_index}\n{tb}\n")
+    except Exception as log_err:
+        print(f"[PIPELINE ERROR] could not write to {ERROR_LOG_FILE}: {log_err}")
+    try:
+        import subprocess
+        subprocess.run(["osascript", "-e",
+                        f'display notification "{str(e)[:150]}" with title "SGKS Notes — a recording failed"'],
+                       timeout=5, capture_output=True)
+    except Exception:
+        pass   # not on a Mac, or osascript unavailable — the log file above still has it
+    # The app only ever sees this calm, fixed message — never the raw exception,
+    # which could be a 300-character stack-trace fragment that reads as broken
+    # even when it's really "both providers happened to be down for a minute"
+    _broadcast({"type": "pipeline_error", "chunk_index": chunk_index,
+                "message": "This recording couldn't be processed. It's been logged — try again in a few minutes."})
 
 
 @app.post("/upload-audio")
