@@ -1,7 +1,8 @@
 // Shared components — implements DESIGN.md §5. Screens compose only these.
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, Image, ScrollView, Animated, Easing, StyleSheet, Platform, AccessibilityInfo,
+  Modal, TextInput,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -111,12 +112,16 @@ export function ActionTile({ c, icon, title, hint, onPress, hero, busy, style })
   );
 }
 
-export function Chip({ c, tone = 'neutral', icon, children }) {
+/** big: for a status chip that's the main thing on screen (e.g. LiveScreen's
+ * top banner while recording/saving) — same chip, legible from across a
+ * room on phone or laptop instead of the normal caption-sized badge. */
+export function Chip({ c, tone = 'neutral', icon, big, children }) {
   const color = { neutral: c.muted, review: c.review, ok: c.leaf, live: c.turmeric, error: c.kumkumText }[tone];
   return (
-    <View style={[st.chip, { borderColor: color }]}>
-      {icon && <Icon name={icon} size={13} color={color} strokeWidth={2} />}
-      <Text style={[T.caption, { color, letterSpacing: 0.4, fontSize: 11.5 }, isTelugu(children) && { fontFamily: F.readMed, fontSize: 12 }]}>{children}</Text>
+    <View style={[st.chip, big && st.chipBig, { borderColor: color }]}>
+      {icon && <Icon name={icon} size={big ? 20 : 13} color={color} strokeWidth={2} />}
+      <Text style={[T.caption, { color, letterSpacing: 0.4, fontSize: big ? 17 : 11.5 },
+        isTelugu(children) && { fontFamily: F.readMed, fontSize: big ? 18 : 12 }]}>{children}</Text>
     </View>
   );
 }
@@ -132,8 +137,12 @@ export function Portrait({ c, size = 52, source = acharyaPhoto }) {
 
 export function sessionStatus(s) {
   if (!s.notes && !s.transcript) return 'processing';
+  // Only a real two-listener disagreement counts as "needs review" — an ASR
+  // gap or a low term-dictionary confidence score is a different situation
+  // (and with ASR_PROVIDER no longer "dual", there's rarely a second listener
+  // to disagree in the first place), so neither should raise this flag.
   const unresolved = s.asr_report?.uncertain?.length || 0;
-  return s.needs_manual_review || unresolved > 0 ? 'review' : 'ready';
+  return unresolved > 0 ? 'review' : 'ready';
 }
 
 export function SessionRow({ c, t, session, onPress, onLongPress, divider = true }) {
@@ -179,14 +188,14 @@ export function StagePath({ c, stages, labels, done, active }) {
             <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
               <View style={{ flex: 1, height: 1.5, backgroundColor: i === 0 ? 'transparent' : (isDone || isActive ? c.turmeric : c.line) }} />
               <Animated.View style={{
-                width: 10, height: 10, borderRadius: 5,
+                width: 13, height: 13, borderRadius: 6.5,
                 backgroundColor: isDone ? c.turmeric : isActive ? c.brassBright : 'transparent',
                 borderWidth: 1.5, borderColor: isDone || isActive ? c.turmeric : c.line,
                 opacity: isActive ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] }) : 1,
               }} />
               <View style={{ flex: 1, height: 1.5, backgroundColor: i === stages.length - 1 ? 'transparent' : (isDone ? c.turmeric : c.line) }} />
             </View>
-            <Text numberOfLines={1} style={[T.caption, { color: isActive ? c.brassBright : isDone ? c.inkSoft : c.muted, marginTop: 6, fontSize: 10, letterSpacing: 0.3 }, isTelugu(labels[key]) && { fontFamily: F.read, fontSize: 10.5 }]}>{labels[key]}</Text>
+            <Text numberOfLines={2} style={[T.label, { color: isActive ? c.brassBright : isDone ? c.inkSoft : c.muted, marginTop: 8, fontSize: 13, textAlign: 'center' }, isTelugu(labels[key]) && { fontFamily: F.readMed, fontSize: 13.5 }]}>{labels[key]}</Text>
           </View>
         );
       })}
@@ -205,13 +214,6 @@ export function VerseBlock({ c, text, original, reference, type }) {
       <Text selectable style={[T.verse, { color: c.ink }]}>{text}</Text>
       {!!origText && (
         <Text selectable style={[isTamil ? T.verseTa : isDev ? T.verseDev : T.verse, { color: c.inkSoft, marginTop: 6 }]}>{origText}</Text>
-      )}
-      {!!(refText || reference) && (
-        <View style={{ flexDirection: 'row', marginTop: 8 }}>
-          {/* The number alone (e.g. "…1062") reads as a cryptic code — say plainly that it's
-             a real pasuram checked against the source collection, not a guess or an id. */}
-          <Chip c={c} tone="ok" icon="check">{`ధృవీకరించిన పాశురం · ${refText || reference}`}</Chip>
-        </View>
       )}
     </View>
   );
@@ -233,16 +235,31 @@ function teluguFirst(text, original) {
   return { primary: text, bracket: '' };
 }
 
-export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel = (x) => x }) {
+export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel = (x) => x, headings = {} }) {
   const blocks = [];
   let para = [];
-  const flush = () => { if (para.length) { blocks.push({ kind: 'p', text: para.join(' ') }); para = []; } };
+  // notes.split('\n') walks line by line, but a moolam/para heading belongs
+  // to a whole paragraph (a \n\n-separated group, same indexing as the
+  // backend's notes_headings) — a paragraph can still span several `blocks`
+  // entries here (a verse line forces its own block), so the heading is
+  // only attached once, to that paragraph's first block.
+  let paraIndex = 0;
+  let paraStarted = false;
+  const markHeadingIfFirst = () => {
+    if (!paraStarted) {
+      const h = headings[paraIndex];
+      if (h) blocks.push({ kind: 'heading', text: h });
+      paraStarted = true;
+    }
+  };
+  const flush = () => { if (para.length) { markHeadingIfFirst(); blocks.push({ kind: 'p', text: para.join(' ') }); para = []; } };
   for (const raw of (notes || '').split('\n')) {
     const line = raw.trim();
-    if (!line) { flush(); continue; }
+    if (!line) { flush(); paraIndex += 1; paraStarted = false; continue; }
     const whole = line.match(SHLOKA_LINE);
     if (whole) {
       flush();
+      markHeadingIfFirst();
       const meta = shlokas.find((s) => (s.text || '').trim() === whole[1].trim());
       blocks.push({ kind: 'verse', text: whole[1], original: whole[2], type: typeLabel(meta?.type) });
       continue;
@@ -250,6 +267,7 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
     const inline = [...line.matchAll(SHLOKA_MARK)];
     if (inline.length) {
       flush();
+      markHeadingIfFirst();
       const parts = [];
       let last = 0;
       for (const m of inline) {
@@ -272,6 +290,9 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
   return (
     <View style={{ gap: S.l }}>
       {blocks.map((b, i) => {
+        if (b.kind === 'heading') return (
+          <Text key={i} selectable style={{ fontFamily: F.readBold, fontSize: 19, color: c.kumkum, marginBottom: -S.s }}>{b.text}</Text>
+        );
         if (b.kind === 'verse') return <VerseBlock key={i} c={c} text={b.text} original={b.original} type={b.type} />;
         if (b.kind === 'p-inline') return (
           <Text key={i} selectable style={[baseStyle, { color: bodyColor }]}>
@@ -292,8 +313,74 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
   );
 }
 
+/** Replaces the old Cancel/OK confirm() for export — that overloaded Cancel
+ *  to mean "plain" and OK to mean "with timestamps", which read as "cancel
+ *  the export" to anyone not told otherwise. This is an explicit choice
+ *  (radio buttons) plus a rename field, with one clearly-labelled action. */
+export function ExportDialog({ c, t, visible, defaultFileName, onCancel, onGenerate }) {
+  const [fileName, setFileName] = useState(defaultFileName || '');
+  const [withTimestamps, setWithTimestamps] = useState(false);
+
+  useEffect(() => {
+    if (visible) { setFileName(defaultFileName || ''); setWithTimestamps(false); }
+  }, [visible, defaultFileName]);
+
+  const options = [
+    [false, t('exportPlain')],
+    [true, t('exportWithTimestamps')],
+  ];
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <Pressable style={st.dialogBackdrop} onPress={onCancel}>
+        <Pressable style={[st.dialogCard, { backgroundColor: c.bg, borderColor: c.line }]} onPress={(e) => e.stopPropagation()}>
+          <Text style={[isTelugu(t('exportTimestampTitle')) ? T.titleTe : T.title, { color: c.ink }]}>{t('exportTimestampTitle')}</Text>
+
+          <Text style={[T.label, { color: c.muted, marginTop: S.l, marginBottom: S.xs }]}>{t('exportFileName')}</Text>
+          <TextInput
+            value={fileName}
+            onChangeText={setFileName}
+            placeholder={t('exportFileNamePlaceholder')}
+            placeholderTextColor={c.muted}
+            style={[st.dialogInput, { color: c.ink, borderColor: c.line, backgroundColor: c.surface }, isTelugu(fileName) && { fontFamily: F.read }]}
+          />
+
+          <View style={{ marginTop: S.l, gap: S.s }}>
+            {options.map(([val, label]) => (
+              <Pressable
+                key={label} onPress={() => setWithTimestamps(val)}
+                accessibilityRole="radio" accessibilityState={{ selected: withTimestamps === val }}
+                style={st.radioRow}
+              >
+                <View style={[st.radioOuter, { borderColor: withTimestamps === val ? c.kumkum : c.line }]}>
+                  {withTimestamps === val && <View style={[st.radioInner, { backgroundColor: c.kumkum }]} />}
+                </View>
+                <Text style={[isTelugu(label) ? T.body : T.body, { color: c.ink }, isTelugu(label) && { fontFamily: F.read, fontSize: 15 }]}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[T.caption, { color: c.muted, marginTop: S.m }, isTelugu(t('exportTimestampHint')) && { fontFamily: F.read, fontSize: 13 }]}>{t('exportTimestampHint')}</Text>
+
+          <View style={{ flexDirection: 'row', gap: S.s, marginTop: S.xl }}>
+            <Button c={c} label={t('cancel')} variant="quiet" onPress={onCancel} style={{ flex: 1 }} />
+            <Button c={c} label={t('generate')} variant="primary" disabled={!fileName.trim()}
+              onPress={() => onGenerate({ fileName: fileName.trim(), withTimestamps })} style={{ flex: 1 }} />
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 const st = StyleSheet.create({
   column: { width: '100%', maxWidth: S.maxWidth, alignSelf: 'center', paddingHorizontal: S.gutter },
+  dialogBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: S.xl },
+  dialogCard: { width: '100%', maxWidth: 420, borderRadius: R.panel, borderWidth: 1, padding: S.xl },
+  dialogInput: { minHeight: 48, borderRadius: R.control, borderWidth: 1, paddingHorizontal: S.l, fontSize: 16 },
+  radioRow: { flexDirection: 'row', alignItems: 'center', gap: S.s, paddingVertical: S.xs },
+  radioOuter: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  radioInner: { width: 12, height: 12, borderRadius: 6 },
   button: {
     minHeight: 52, paddingHorizontal: S.xl, borderRadius: R.control, borderWidth: 1,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: S.s,
@@ -310,6 +397,7 @@ const st = StyleSheet.create({
   },
   tileRing: { width: 52, height: 52, borderRadius: 26, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 3, borderRadius: R.pill, borderWidth: 1 },
+  chipBig: { gap: 8, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1.5 },
   row: { flexDirection: 'row', alignItems: 'center', gap: S.m, paddingVertical: S.m, minHeight: 72 },
   rowMark: { width: 46, height: 46, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
   verse: { borderLeftWidth: 2, paddingVertical: S.m, paddingHorizontal: S.l, borderRadius: 4 },

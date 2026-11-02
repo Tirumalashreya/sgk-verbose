@@ -14,7 +14,15 @@
       "bundleIdentifier": "org.sgks.shravanam"
     },
     "android": {
-      "package": "org.sgks.shravanam"
+      "package": "org.sgks.shravanam",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE"
+      ]
     },
     "plugins": [
       "expo-font",
@@ -37,6 +45,12 @@
           "imageWidth": 200
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7c9d2d80-6c04-482a-8a15-9dfa594d016f"
+      }
+    },
+    "owner": "tirumalashreya50"
   }
 }

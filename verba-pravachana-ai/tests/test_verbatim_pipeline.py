@@ -414,7 +414,7 @@ def test_gemini_failed_piece_is_covered_by_sarvam(monkeypatch):
     from agents import gemini_asr as g, transcription_agent as ta
     monkeypatch.setattr(ta, "_to_mp3_16k", lambda p: p)
     monkeypatch.setattr(ta, "_split_audio", lambda p, max_sec: ["p0", "p1", "p2"])
-    def piece(path, use_cache=True):
+    def piece(path, client=None, use_cache=True):
         if path == "p1":
             raise RuntimeError("503 UNAVAILABLE high demand")
         return f"gemini-{path}"
@@ -513,7 +513,7 @@ def test_gemini_empty_piece_is_a_gap_not_silence(monkeypatch):
     from agents import gemini_asr as g, transcription_agent as ta
     monkeypatch.setattr(ta, "_to_mp3_16k", lambda p: p)
     monkeypatch.setattr(ta, "_split_audio", lambda p, max_sec: ["p0", "p1", "p2"])
-    monkeypatch.setattr(g, "_llm_piece", lambda path, use_cache=True: "" if path == "p1" else f"text-{path}")
+    monkeypatch.setattr(g, "_llm_piece", lambda path, client=None, use_cache=True: "" if path == "p1" else f"text-{path}")
     monkeypatch.setattr(g, "_sarvam_fallback", lambda p: "")
     text, _, _, gaps = g.gemini_stt("x.mp3", "llm")
     assert text == "text-p0 [?] text-p2" and gaps == 1

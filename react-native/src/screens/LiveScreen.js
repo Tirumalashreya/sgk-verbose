@@ -8,9 +8,9 @@ import { palettes, F, T, S, R } from '../theme';
 import { Button, IconButton, Chip, StagePath, Overline, Enter, Portrait } from '../ui/kit';
 import Waveform from '../ui/Waveform';
 import Kolam from '../ui/Kolam';
-import { createWebSocket, startLive, stopSession, uploadAudio, startSession, getSessions } from '../services/api';
+import { createWebSocket, startLive, stopSession, uploadAudio, cancelUpload, startSession, getSessions } from '../services/api';
 import { useMinuteRecorder } from '../services/useMinuteRecorder';
-import { notify, choose, isWeb } from '../services/platform';
+import { notify, choose, confirm, isWeb } from '../services/platform';
 
 const c = palettes.manuscript;
 const STAGES = ['transcription', 'correction', 'shloka_detector', 'knowledge_structurer', 'formatting', 'validation', 'memory'];
@@ -32,6 +32,7 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
   const [elapsed, setElapsed] = useState(0);
   const pieces = useRef(0);
   const startedAt = useRef(0);
+  const pausedAt = useRef(0);
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
@@ -104,12 +105,22 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
     setUpload?.({ name: f.name, status: 'uploading', startedAt: at });
     try {
       const res = await uploadAudio(f);
-      setUpload?.({ name: f.name, status: 'processing', startedAt: at, duplicate: res.status === 'duplicate' });
+      setUpload?.({ name: f.name, status: 'processing', startedAt: at, duplicate: res.status === 'duplicate', digest: res.digest });
     } catch (e) {
       const msg = String(e.message || e);
       setUpload?.({ name: f.name, status: 'error', startedAt: at, message: msg });
       setError(msg); setMode('error');
     }
+  };
+
+  const discardUpload = async () => {
+    if (!upload?.digest) return;
+    const ok = await confirm(t('discardUpload'), t('discardUploadHint'), t('discard'));
+    if (!ok) return;
+    try { await cancelUpload(upload.digest); } catch (e) { console.warn('[live] cancel failed', e); }
+    setUpload?.(null);
+    setMode('idle');
+    setDone(new Set()); setActive('transcription'); setError('');
   };
 
   const runLink = async (url) => {
@@ -147,7 +158,22 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
     await stopSession();               // the server then rebuilds the notes once, over everything
   };
 
+  const pauseRecording = () => {
+    recorder.pause();
+    pausedAt.current = Date.now();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setMode('paused');
+  };
+
+  const resumeRecording = () => {
+    startedAt.current += Date.now() - pausedAt.current;   // keep elapsed frozen across the pause
+    recorder.resume();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setMode('recording');
+  };
+
   const recording = mode === 'recording';
+  const paused = mode === 'paused';
   const busy = mode === 'processing' || mode === 'saving';
   const level = recording ? recorder.level : busy ? 0.5 : 0.08;
   const banner = upload && mode === 'processing'
@@ -160,8 +186,11 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
       <Kolam color={c.kolam} />
       <View style={[st.top, { paddingTop: insets.top + S.s }]}>
         <IconButton c={c} icon="back" label={t('back')} onPress={() => back() || go('home')} />
-        {recording && <Chip c={c} tone="live">{`${t('recording')} · ${fmt(elapsed)}`}</Chip>}
-        {busy && <Chip c={c} tone="live">{mode === 'saving' ? t('stopSaving') : t('processing')}</Chip>}
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          {recording && <Chip c={c} tone="live" big>{`${t('recording')} · ${fmt(elapsed)}`}</Chip>}
+          {paused && <Chip c={c} tone="review" big>{`${t('paused')} · ${fmt(elapsed)}`}</Chip>}
+          {busy && <Chip c={c} tone="live" big>{mode === 'saving' ? t('stopSaving') : t('processing')}</Chip>}
+        </View>
         <View style={{ width: 44 }} />
       </View>
 
@@ -188,8 +217,13 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
       </View>
 
       {busy && <View style={st.stages}><StagePath c={c} stages={STAGES} labels={t('stages')} done={done} active={active} /></View>}
+      {mode === 'processing' && !!upload?.digest && (
+        <View style={{ alignItems: 'center', marginTop: S.l }}>
+          <Button c={c} label={t('discardUpload')} variant="quiet" onPress={discardUpload} />
+        </View>
+      )}
 
-      {recording && preview.length > 0 && (
+      {(recording || paused) && preview.length > 0 && (
         <ScrollView style={st.preview} contentContainerStyle={{ padding: S.l, gap: S.s }}>
           <Overline c={c}>{t('listening')}</Overline>
           {preview.map((p, i) => (
@@ -200,7 +234,14 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
 
       <View style={[st.controls, { paddingBottom: insets.bottom + S.xl }]}>
         {(mode === 'idle' || mode === 'error') && <Button c={c} icon="mic" label={t('record')} onPress={startRecording} style={{ minWidth: 240 }} />}
-        {recording && <Button c={c} icon="stop" label={t('stop')} onPress={stopRecording} style={{ minWidth: 240 }} />}
+        {(recording || paused) && (
+          <View style={{ flexDirection: 'row', gap: S.m }}>
+            {recording
+              ? <Button c={c} variant="quiet" icon="pause" label={t('pause')} onPress={pauseRecording} style={{ minWidth: 150 }} />
+              : <Button c={c} variant="quiet" icon="play" label={t('resume')} onPress={resumeRecording} style={{ minWidth: 150 }} />}
+            <Button c={c} icon="stop" label={t('stop')} onPress={stopRecording} style={{ minWidth: 150 }} />
+          </View>
+        )}
       </View>
     </View>
   );

@@ -17,6 +17,15 @@ function useNativeMinuteRecorder(onPiece) {
   const running = useRef(false);
   const timer = useRef(null);
   const chain = useRef(Promise.resolve());   // pieces are cut and uploaded strictly in order
+  // Tracks how far into the current minute we are, net of time spent paused,
+  // so resuming schedules the next cut for what's actually left of the
+  // minute instead of a fresh 60s (which would make pieces drift longer).
+  const pieceStartedAt = useRef(0);
+  const pausedSince = useRef(0);
+  const pausedMsThisPiece = useRef(0);
+  const [paused, setPaused] = useState(false);
+
+  const scheduleCut = (ms) => { timer.current = setTimeout(() => cutPiece(false), Math.max(ms, 1000)); };
 
   const cutPiece = (isLast) => {
     chain.current = chain.current.then(async () => {
@@ -25,7 +34,9 @@ function useNativeMinuteRecorder(onPiece) {
       if (running.current && !isLast) {
         await recorder.prepareToRecordAsync();
         recorder.record();
-        timer.current = setTimeout(() => cutPiece(false), PIECE_MS);
+        pieceStartedAt.current = Date.now();
+        pausedMsThisPiece.current = 0;
+        scheduleCut(PIECE_MS);
       }
     });
     return chain.current;
@@ -42,18 +53,38 @@ function useNativeMinuteRecorder(onPiece) {
     await recorder.prepareToRecordAsync();
     recorder.record();
     running.current = true;
-    timer.current = setTimeout(() => cutPiece(false), PIECE_MS);
+    pieceStartedAt.current = Date.now();
+    pausedMsThisPiece.current = 0;
+    scheduleCut(PIECE_MS);
+  };
+
+  const pause = () => {
+    if (!running.current || paused) return;
+    clearTimeout(timer.current);
+    recorder.pause();
+    pausedSince.current = Date.now();
+    setPaused(true);
+  };
+
+  const resume = () => {
+    if (!running.current || !paused) return;
+    pausedMsThisPiece.current += Date.now() - pausedSince.current;
+    recorder.record();
+    const elapsedInPiece = Date.now() - pieceStartedAt.current - pausedMsThisPiece.current;
+    scheduleCut(PIECE_MS - elapsedInPiece);
+    setPaused(false);
   };
 
   const stop = async () => {
     running.current = false;
+    setPaused(false);
     clearTimeout(timer.current);
     await cutPiece(true);
   };
 
   // metering is dBFS (about -160 silence … 0 loudest); 0–1 is easier to animate
-  const level = state.metering == null ? 0 : Math.max(0, Math.min(1, (state.metering + 60) / 60));
-  return { start, stop, level, isRecording: !!state.isRecording, durationMillis: state.durationMillis || 0 };
+  const level = paused ? 0 : (state.metering == null ? 0 : Math.max(0, Math.min(1, (state.metering + 60) / 60)));
+  return { start, stop, pause, resume, paused, level, isRecording: !!state.isRecording, durationMillis: state.durationMillis || 0 };
 }
 
 // ── Web: a raw MediaRecorder, kept open for the whole recording ────────────
@@ -86,8 +117,12 @@ function useWebMinuteRecorder(onPiece) {
   const timer = useRef(null);
   const chain = useRef(Promise.resolve());   // pieces are cut and uploaded strictly in order
   const startedAt = useRef(0);
+  const pieceStartedAt = useRef(0);
+  const pausedSince = useRef(0);
+  const pausedMsThisPiece = useRef(0);
   const [level, setLevel] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [durationMillis, setDurationMillis] = useState(0);
 
   const pollMeter = () => {
@@ -137,6 +172,8 @@ function useWebMinuteRecorder(onPiece) {
 
   /** Ends the current minute's recording (one complete file) and, unless this
    * is the last piece, starts the next minute on the same open stream. */
+  const scheduleCut = (ms) => { timer.current = setTimeout(() => cutPiece(false), Math.max(ms, 1000)); };
+
   const cutPiece = (isLast) => {
     chain.current = chain.current.then(() => new Promise((resolve) => {
       const recorder = recorderRef.current;
@@ -145,11 +182,13 @@ function useWebMinuteRecorder(onPiece) {
         if (running.current && !isLast) {
           recorderRef.current = newRecorderOnTheOpenStream();
           recorderRef.current.start();
-          timer.current = setTimeout(() => cutPiece(false), PIECE_MS);
+          pieceStartedAt.current = Date.now();
+          pausedMsThisPiece.current = 0;
+          scheduleCut(PIECE_MS);
         }
         resolve();
       }, { once: true });
-      recorder.stop();   // fires one ondataavailable (the complete piece), then 'stop'
+      recorder.stop();   // valid whether the recorder is 'recording' or 'paused'; fires one ondataavailable, then 'stop'
     }));
     return chain.current;
   };
@@ -178,16 +217,44 @@ function useWebMinuteRecorder(onPiece) {
     running.current = true;
     recorderRef.current = newRecorderOnTheOpenStream();
     recorderRef.current.start();   // no timeslice — one complete file per start()/stop() cycle
-    timer.current = setTimeout(() => cutPiece(false), PIECE_MS);
+    pieceStartedAt.current = Date.now();
+    pausedMsThisPiece.current = 0;
+    scheduleCut(PIECE_MS);
     setIsRecording(true);
     startedAt.current = Date.now();
     rafId.current = requestAnimationFrame(pollMeter);
+  };
+
+  // MediaRecorder's own pause()/resume() keep the same recorder and stream —
+  // the eventual piece file is one continuous recording with the paused
+  // stretch simply missing, not a stop/restart that would need stitching.
+  const pause = () => {
+    if (!running.current || paused) return;
+    clearTimeout(timer.current);
+    recorderRef.current?.pause();
+    cancelAnimationFrame(rafId.current);
+    pausedSince.current = Date.now();
+    setPaused(true);
+    setLevel(0);
+  };
+
+  const resume = () => {
+    if (!running.current || !paused) return;
+    const pausedMs = Date.now() - pausedSince.current;
+    pausedMsThisPiece.current += pausedMs;
+    startedAt.current += pausedMs;   // so durationMillis reflects recorded time, not wall-clock
+    recorderRef.current?.resume();
+    const elapsedInPiece = Date.now() - pieceStartedAt.current - pausedMsThisPiece.current;
+    scheduleCut(PIECE_MS - elapsedInPiece);
+    rafId.current = requestAnimationFrame(pollMeter);
+    setPaused(false);
   };
 
   /** Stops and resolves only after the last piece has been uploaded. */
   const stop = async () => {
     running.current = false;
     setIsRecording(false);
+    setPaused(false);
     clearTimeout(timer.current);
     await cutPiece(true);
     teardown();
@@ -195,7 +262,7 @@ function useWebMinuteRecorder(onPiece) {
 
   useEffect(() => () => teardown(), []);   // release the mic if the screen unmounts mid-recording
 
-  return { start, stop, level, isRecording, durationMillis };
+  return { start, stop, pause, resume, paused, level, isRecording, durationMillis };
 }
 
 export function useMinuteRecorder(onPiece) {

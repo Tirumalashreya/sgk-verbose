@@ -51,6 +51,32 @@ def _get_client_locked():
     return _client
 
 
+_vertex_client = None
+_vertex_client_lock = __import__("threading").Lock()
+
+
+def _get_vertex_client():
+    """Fallback only — same model, billed through Google Cloud instead of the
+    AI Studio API key's prepaid credits. Only reached if the primary client's
+    own retries (above) are all exhausted, same slot _sarvam_fallback used to
+    sit in."""
+    global _vertex_client
+    with _vertex_client_lock:
+        if _vertex_client is None:
+            from google import genai
+            project = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+            if not project:
+                raise RuntimeError("GOOGLE_CLOUD_PROJECT is not set")
+            # "global" — gemini-3.8-flash (LLM_MODEL) 404s on regional
+            # endpoints like us-central1, confirmed by testing directly; it's
+            # only served on the global one.
+            _vertex_client = genai.Client(
+                vertexai=True, project=project, location="global",
+                http_options={"timeout": 180_000},
+            )
+        return _vertex_client
+
+
 def _vocabulary() -> list[str]:
     try:
         with open(_TERMS_PATH, encoding="utf-8") as f:
@@ -151,7 +177,7 @@ def _transcribe_piece(path: str, mode: str, offset: float, attempts: int = 3,
     return text, [dict(p, start=p["start"] + offset, end=p["end"] + offset) for p in phrases]
 
 
-def _llm_piece(path: str, use_cache: bool = True, attempts: int = 3) -> str:
+def _llm_piece(path: str, client=None, use_cache: bool = True, attempts: int = 3) -> str:
     from google.genai import types
     with open(path, "rb") as f:
         audio = f.read()
@@ -160,7 +186,7 @@ def _llm_piece(path: str, use_cache: bool = True, attempts: int = 3) -> str:
     if use_cache and os.path.exists(cache) and os.path.getsize(cache) > 0:
         with open(cache, encoding="utf-8") as f:
             return f.read()
-    client = _get_client()
+    client = client or _get_client()
     for attempt in range(attempts):
         try:
             result = client.models.generate_content(
@@ -198,38 +224,140 @@ def _sarvam_fallback(piece: str) -> str:
         return ""
 
 
-def gemini_stt(path: str, mode: str | None = None, use_cache: bool = True) -> tuple:
-    """Transcribe a whole recording in ≤25-minute pieces."""
+def _vertex_fallback(piece: str) -> str:
+    """Same prompt, same model, same Gemini — just through Google Cloud
+    billing instead of the AI Studio key, for when that key's own credits run
+    out. Only reached after the primary client's retries are all exhausted."""
+    if not os.getenv("GOOGLE_CLOUD_PROJECT"):
+        return ""
+    from google.genai import types
+    try:
+        client = _get_vertex_client()
+        with open(piece, "rb") as f:
+            audio = f.read()
+        result = client.models.generate_content(
+            model=LLM_MODEL,
+            contents=[types.Part.from_bytes(data=audio, mime_type="audio/mpeg"), LLM_PROMPT],
+            config=types.GenerateContentConfig(temperature=0),
+        )
+        text = " ".join((result.text or "").split())
+        return text
+    except Exception as e:
+        print(f"[gemini_asr] Vertex AI fallback failed too: {str(e)[:150]}")
+        return ""
+
+
+PARALLEL_PIECES = int(os.getenv("GEMINI_MAX_PARALLEL", "4"))  # pieces are independent audio
+                                                                # chunks, so an upload no longer
+                                                                # waits on them one at a time — a
+                                                                # live recording was always this
+                                                                # fast in practice because each
+                                                                # minute transcribes in the
+                                                                # background while the next minute
+                                                                # is still being recorded; an
+                                                                # upload has no such overlap to
+                                                                # hide behind, so it needs this
+                                                                # explicitly
+
+
+def _process_one_piece(i: int, piece: str, total: int, mode: str, piece_seconds: int,
+                        use_cache: bool, digest: str | None = None) -> tuple[int, str, list[dict], bool]:
+    """One piece, independently — returns (index, text, phrases, was_a_gap) so the
+    caller can reassemble results in order after running these concurrently.
+
+    For "llm" mode, pieces alternate which account does the work (AI Studio
+    key vs Vertex AI/Google Cloud billing) — two separate rate-limit pools,
+    so running several pieces at once no longer piles every request onto one
+    pool's per-minute limit. Whichever one wasn't tried first still backs up
+    the other if it fails.
+
+    All pieces get submitted to the thread pool up front — with max_workers
+    capping how many actually run at once, most of them sit queued, not yet
+    doing any real work. Checking cancellation again right here (not just
+    before submission) means a queued piece a worker hasn't picked up yet
+    still skips its API call once cancelled, instead of every one of them
+    firing off regardless because submission itself was already done."""
+    from agents import cancellation
+    if cancellation.is_cancelled(digest):
+        return i, "", [], False
+    offset = i * piece_seconds
+    vertex_available = bool(os.getenv("GOOGLE_CLOUD_PROJECT"))
+    use_vertex_first = mode == "llm" and vertex_available and i % 2 == 1
+    try:
+        if mode == "llm":
+            client = _get_vertex_client() if use_vertex_first else _get_client()
+            text, phrases = _llm_piece(piece, client=client, use_cache=use_cache), []
+        else:
+            text, phrases = _transcribe_piece(piece, mode, offset, use_cache=use_cache)
+        if not text.strip():
+            raise RuntimeError("empty transcription returned")
+        label = "Vertex AI" if use_vertex_first else "AI Studio"
+        print(f"  [gemini piece {i + 1}/{total}] {len(text)} chars ({label})")
+        return i, text, phrases, False
+    except Exception as e:
+        print(f"  [gemini piece {i + 1}/{total}] FAILED after retries: {str(e)[:120]}")
+        # Whichever pool handled this piece just exhausted its own retries —
+        # try the other one before giving up, so one pool's limit or billing
+        # issue doesn't leave a hole in the transcript.
+        if use_vertex_first:
+            source = "AI Studio"
+            try:
+                fallback = _llm_piece(piece, client=_get_client(), use_cache=use_cache)
+            except Exception as e2:
+                print(f"[gemini_asr] AI Studio fallback failed too: {str(e2)[:150]}")
+                fallback = ""
+        else:
+            source = "Vertex AI"
+            fallback = _vertex_fallback(piece)
+        if not fallback:
+            fallback = _sarvam_fallback(piece)
+            source = "Sarvam"
+        if fallback:
+            print(f"  [gemini piece {i + 1}/{total}] covered by {source} ({len(fallback)} chars)")
+            return i, fallback, [], False
+        return i, GAP_MARKER, [], True
+
+
+def gemini_stt(path: str, mode: str | None = None, use_cache: bool = True, digest: str | None = None) -> tuple:
+    """Transcribe a whole recording in ≤25-minute pieces, several at once —
+    pieces don't depend on each other, so there's no reason to wait on them
+    one at a time. `digest` (the upload's content hash) lets a user-cancelled
+    upload stop dispatching further pieces — already in-flight API calls still
+    finish, but nothing new starts."""
     from agents.transcription_agent import _to_mp3_16k, _split_audio
+    from agents import cancellation
     mode = mode or os.getenv("GEMINI_ASR_MODE", "llm")
     piece_seconds = LLM_PIECE_SECONDS if mode == "llm" else PIECE_SECONDS
     print(f"[transcription] Gemini ({LLM_MODEL if mode == 'llm' else MODEL}, verbatim, {mode})...")
     pieces = _split_audio(_to_mp3_16k(path), max_sec=piece_seconds)
 
-    texts, segments, gaps = [], [], 0
-    for i, piece in enumerate(pieces):
-        offset = i * piece_seconds
-        try:
-            if mode == "llm":
-                text, phrases = _llm_piece(piece, use_cache=use_cache), []
-            else:
-                text, phrases = _transcribe_piece(piece, mode, offset, use_cache=use_cache)
-            if not text.strip():
-                raise RuntimeError("empty transcription returned")
-            texts.append(text)
-            segments.extend(phrases)
-            print(f"  [gemini piece {i + 1}/{len(pieces)}] {len(text)} chars")
-        except Exception as e:
-            print(f"  [gemini piece {i + 1}/{len(pieces)}] FAILED after retries: {str(e)[:120]}")
-            # Gemini is often briefly overloaded (503) — cover this piece with Sarvam
-            # rather than leaving a hole in the transcript
-            fallback = _sarvam_fallback(piece)
-            if fallback:
-                texts.append(fallback)
-                print(f"  [gemini piece {i + 1}/{len(pieces)}] covered by Sarvam ({len(fallback)} chars)")
-            else:
-                gaps += 1
-                texts.append(GAP_MARKER)
+    workers = max(1, min(PARALLEL_PIECES, len(pieces)))
+    results = []
+    if workers == 1:
+        for i, p in enumerate(pieces):
+            if cancellation.is_cancelled(digest):
+                print(f"[gemini_asr] cancelled — stopping after {i}/{len(pieces)} piece(s)")
+                break
+            results.append(_process_one_piece(i, p, len(pieces), mode, piece_seconds, use_cache, digest))
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = []
+            for i, p in enumerate(pieces):
+                if cancellation.is_cancelled(digest):
+                    print(f"[gemini_asr] cancelled — not starting remaining piece(s)")
+                    break
+                futures.append(ex.submit(_process_one_piece, i, p, len(pieces), mode, piece_seconds, use_cache, digest))
+            results = [f.result() for f in futures]
+
+    if cancellation.is_cancelled(digest):
+        print("[transcription] Gemini cancelled by user")
+        return "", "te", [], 0
+
+    results.sort(key=lambda r: r[0])
+    texts = [r[1] for r in results]
+    segments = [p for r in results for p in r[2]]
+    gaps = sum(1 for r in results if r[3])
 
     full_text = " ".join(t for t in texts if t)
     print(f"[transcription] Gemini done ({len(full_text)} chars, {gaps} gap(s))")

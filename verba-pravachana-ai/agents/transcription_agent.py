@@ -255,7 +255,8 @@ def transcription_agent(state: VerbaState) -> VerbaState:
     choice = os.getenv("ASR_PROVIDER", "sarvam").lower()
     if choice == "gemini" and os.getenv("GEMINI_API_KEY"):
         from agents.gemini_asr import gemini_stt
-        providers.append(("Gemini", gemini_stt))
+        digest = state.get("digest")
+        providers.append(("Gemini", lambda p: gemini_stt(p, digest=digest)))
     if choice == "dual" and SARVAM_API_KEY and os.getenv("GEMINI_API_KEY"):
         from agents.dual_asr import dual_stt
         providers.append(("Dual", dual_stt))
@@ -291,6 +292,10 @@ def transcription_agent(state: VerbaState) -> VerbaState:
         except Exception as e:
             print(f"[transcription] {name} failed ({e}) — trying next provider")
             errors.append(f"{name}: {_short_error(e)}")
+
+    from agents import cancellation
+    if cancellation.is_cancelled(state.get("digest")):
+        raise cancellation.UploadCancelled("upload discarded by user")
 
     # No last-resort fallback: a transcript missing most of the talk (as Whisper
     # produced on test recordings) is worse than a failure that says so

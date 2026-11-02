@@ -1,12 +1,13 @@
 // Reading — the complete verbatim notes, calm and legible. Follows the phone's
 // light/dark setting (Manuscript by day, Hall at night).
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
+import Sanscript from '@indic-transliteration/sanscript';
 import { useTheme, F, T, S, R } from '../theme';
-import { Screen, Enter, IconButton, Chip, Button, ReadingText, VerseBlock, sessionStatus } from '../ui/kit';
+import { Screen, Enter, IconButton, Chip, Button, ReadingText, VerseBlock, sessionStatus, ExportDialog } from '../ui/kit';
 import { getSessions, getTimestampedNotes, updateNotes } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
-import { notify, choose } from '../services/platform';
+import { notify } from '../services/platform';
 
 const isTe = (s) => /[ఀ-౿]/.test(s || '');
 
@@ -21,6 +22,14 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [teluguAidOn, setTeluguAidOn] = useState(false);
+  const [romanInput, setRomanInput] = useState('');
+  const [exportKind, setExportKind] = useState(null);   // 'pdf' | 'doc' | null (dialog closed)
+  const teluguPreview = useMemo(() => {
+    if (!romanInput.trim()) return '';
+    try { return Sanscript.t(romanInput, 'itrans', 'telugu'); } catch { return ''; }
+  }, [romanInput]);
 
   useEffect(() => {
     if (given) { setSession(given); return; }
@@ -37,7 +46,11 @@ export default function ReadingScreen({ go, back, t, session: given }) {
 
   const shlokas = session.shlokas || [];
   const uncertain = session.asr_report?.uncertain || [];
+  // sessionStatus() only returns 'review' for a real two-listener
+  // disagreement now (an ASR gap or low confidence score no longer counts),
+  // so the hint can safely always describe that one real situation.
   const review = sessionStatus(session) === 'review';
+  const reviewHint = t('reviewHint');
   const date = session.created_at ? new Date(session.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '';
 
   const loadTimestamps = async () => {
@@ -53,25 +66,40 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   };
   const selectTab = (id) => { setTab(id); if (id === 'timestamps') loadTimestamps(); };
 
-  const startEdit = () => { setDraft(session.notes || session.transcript || ''); setEditing(true); };
-  const cancelEdit = () => setEditing(false);
+  const startEdit = () => { setDraft(session.notes || session.transcript || ''); setEditing(true); setTeluguAidOn(false); setRomanInput(''); };
+  const cancelEdit = () => { setEditing(false); setTeluguAidOn(false); setRomanInput(''); };
   const saveEdit = async () => {
     setSaving(true);
     try {
       await updateNotes(session.id, draft);
       setSession((s) => ({ ...s, notes: draft, enhanced_notes: draft, edited: true }));
       setTsStatus('idle'); setTsNotes(null);   // the cached timestamped version no longer matches
-      setEditing(false);
+      setEditing(false); setTeluguAidOn(false); setRomanInput('');
     } catch (e) {
       notify(t('edit'), String(e.message) || t('editFailed'));
     } finally {
       setSaving(false);
     }
   };
+  // Inserts the live Telugu preview at wherever the cursor last was in the
+  // notes box, then moves the cursor past what it just inserted — so typing
+  // word after word in the aid reads naturally into the real notes.
+  const insertTelugu = () => {
+    if (!teluguPreview) return;
+    const insert = teluguPreview + ' ';
+    const { start, end } = selection;
+    const next = draft.slice(0, start) + insert + draft.slice(end);
+    const caret = start + insert.length;
+    setDraft(next);
+    setSelection({ start: caret, end: caret });
+    setRomanInput('');
+  };
 
-  const exportAs = async (kind) => {
-    const withTimestamps = await choose(t('exportTimestampTitle'), t('exportTimestampHint'),
-      t('exportWithTimestamps'), t('exportPlain'));
+  const exportAs = (kind) => setExportKind(kind);   // opens the dialog; the actual download happens on Generate
+
+  const handleExportGenerate = async ({ fileName, withTimestamps }) => {
+    const kind = exportKind;
+    setExportKind(null);
     let toExport = session;
     if (withTimestamps) {
       try {
@@ -82,7 +110,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
         return;
       }
     }
-    try { await (kind === 'pdf' ? downloadPDF(toExport) : downloadDOC(toExport)); }
+    try { await (kind === 'pdf' ? downloadPDF(toExport, fileName) : downloadDOC(toExport, fileName)); }
     catch (e) { notify(kind.toUpperCase(), String(e.message || e)); }
   };
   const tabs = [['notes', t('notes')], ['roman', t('roman')], ['verses', `${t('versesTab')} · ${shlokas.length}`],
@@ -123,7 +151,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.s }}>
             <Chip c={c} tone="review" icon="alert">{uncertain.length ? t('reviewSpots')(uncertain.length) : t('needsReview')}</Chip>
           </View>
-          <Text style={[isTe(t('reviewHint')) ? { fontFamily: F.read, fontSize: 14, lineHeight: 24 } : T.body, { color: c.inkSoft, marginTop: S.s }]}>{t('reviewHint')}</Text>
+          <Text style={[isTe(reviewHint) ? { fontFamily: F.read, fontSize: 14, lineHeight: 24 } : T.body, { color: c.inkSoft, marginTop: S.s }]}>{reviewHint}</Text>
           {showReview && uncertain.map((u, i) => (
             <View key={i} style={[st.spot, { borderTopColor: c.line }]}>
               <Text style={[T.read, { color: c.muted, fontSize: 14, lineHeight: 24 }]}>…{u.context}…</Text>
@@ -152,6 +180,8 @@ export default function ReadingScreen({ go, back, t, session: given }) {
             <TextInput
               value={draft}
               onChangeText={setDraft}
+              onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
+              selection={selection}
               multiline
               autoFocus
               autoCorrect={false}
@@ -164,6 +194,32 @@ export default function ReadingScreen({ go, back, t, session: given }) {
               accessibilityLabel={t('notes')}
               style={[T.read, st.editInput, { color: c.ink, borderColor: c.brass, backgroundColor: c.surface }]}
             />
+            <Pressable onPress={() => setTeluguAidOn((v) => !v)} accessibilityRole="button" accessibilityState={{ selected: teluguAidOn }}
+              style={[st.aidToggle, { borderColor: c.brass, backgroundColor: teluguAidOn ? c.brass : 'transparent' }]}>
+              <Text style={[T.label, { color: teluguAidOn ? c.onBrass : c.brass }]}>{t('teluguAid')}</Text>
+            </Pressable>
+            {teluguAidOn && (
+              <View style={[st.aidPanel, { borderColor: c.line, backgroundColor: c.surface }]}>
+                <Text style={[T.body, { color: c.muted, fontSize: 12.5, marginBottom: S.xs }]}>{t('teluguAidHint')}</Text>
+                <TextInput
+                  value={romanInput}
+                  onChangeText={setRomanInput}
+                  onSubmitEditing={insertTelugu}
+                  blurOnSubmit={false}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder={t('teluguAidPlaceholder')}
+                  placeholderTextColor={c.muted}
+                  accessibilityLabel={t('teluguAid')}
+                  style={[T.body, st.aidInput, { color: c.ink, borderColor: c.line, backgroundColor: c.raised }]}
+                />
+                <View style={[st.aidPreviewRow, { borderColor: c.line }]}>
+                  <Text style={[T.read, { color: c.ink, fontSize: 20, flex: 1 }]}>{teluguPreview || ' '}</Text>
+                  <Button c={c} variant="brass" label={t('teluguAidInsert')} onPress={insertTelugu} disabled={!teluguPreview} />
+                </View>
+              </View>
+            )}
             <View style={{ flexDirection: 'row', gap: S.s }}>
               <Button c={c} variant="quiet" label={t('editCancel')} onPress={cancelEdit} style={{ flex: 1 }} disabled={saving} />
               <Button c={c} variant="brass" label={saving ? t('editSaved') + '…' : t('editSave')} onPress={saveEdit} style={{ flex: 1 }} disabled={saving} />
@@ -175,10 +231,10 @@ export default function ReadingScreen({ go, back, t, session: given }) {
             {session.edited && (
               <View style={{ flexDirection: 'row' }}><Chip c={c} tone="ok" icon="check">{t('editedBadge')}</Chip></View>
             )}
-            <ReadingText c={c} notes={session.notes || session.transcript} shlokas={shlokas} typeLabel={t('verseType')} />
+            <ReadingText c={c} notes={session.notes || session.transcript} shlokas={shlokas} typeLabel={t('verseType')} headings={session.notes_headings || {}} />
           </View>
         )}
-        {tab === 'roman' && <ReadingText c={c} notes={session.transliterated_notes || ''} shlokas={shlokas} roman typeLabel={t('verseType')} />}
+        {tab === 'roman' && <ReadingText c={c} notes={session.transliterated_notes || ''} shlokas={shlokas} roman typeLabel={t('verseType')} headings={session.notes_headings || {}} />}
         {tab === 'verses' && (shlokas.length === 0
           ? <Text style={[T.body, { color: c.muted }]}>{t('noVerses')}</Text>
           : <View style={{ gap: S.m }}>{shlokas.map((s, i) => (
@@ -193,6 +249,8 @@ export default function ReadingScreen({ go, back, t, session: given }) {
           : null
         )}
       </View>
+      <ExportDialog c={c} t={t} visible={!!exportKind} defaultFileName={session.title || 'pravachanam'}
+        onCancel={() => setExportKind(null)} onGenerate={handleExportGenerate} />
     </Screen>
   );
 }
@@ -206,4 +264,8 @@ const st = StyleSheet.create({
   tabs: { flexDirection: 'row', marginTop: S.xxl, borderWidth: StyleSheet.hairlineWidth, borderRadius: R.control, padding: 4 },
   tab: { flex: 1, minHeight: 44, borderRadius: R.control - 2, borderWidth: 1, borderColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
   editInput: { minHeight: 320, borderWidth: 1, borderRadius: R.panel, padding: S.l, textAlignVertical: 'top' },
+  aidToggle: { alignSelf: 'flex-start', borderWidth: 1, borderRadius: R.pill, paddingHorizontal: S.l, paddingVertical: S.s },
+  aidPanel: { borderWidth: 1, borderRadius: R.panel, padding: S.l, gap: S.s },
+  aidInput: { borderWidth: 1, borderRadius: R.control, padding: S.m, fontSize: 16 },
+  aidPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: S.m, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: S.m },
 });

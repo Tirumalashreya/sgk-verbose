@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from graph.orchestrator import app as langgraph_app
 from agents.rag_agent import rag_agent
+from agents import cancellation
 
 app = FastAPI()
 
@@ -65,9 +66,12 @@ def _load_sessions():
     # that captured nothing (e.g. Stop pressed straight away) — never show it
     return [x for x in sessions if (x.get("transcript") or "").strip() or (x.get("notes") or "").strip()]
 
+_save_lock = threading.Lock()   # two uploads finishing at the same instant must not interleave their writes
+
+
 def _save_sessions():
     try:
-        with open(SESSIONS_FILE, "w") as f:
+        with _save_lock, open(SESSIONS_FILE, "w") as f:
             json.dump(sessions_store, f, ensure_ascii=False)
     except Exception as e:
         print(f"[sessions] save failed: {e}")
@@ -318,6 +322,7 @@ async def update_notes(session_id: str, data: UpdateNotesRequest):
     session["enhanced_notes"] = data.notes
     session["edited"] = True
     session.pop("notes_timestamped", None)
+    session.pop("notes_headings", None)   # paragraph indices no longer line up with the edited text
     _save_sessions()
     _broadcast({"type": "chunk_complete", "chunk_index": session.get("chunk_index", 0),
                 "title": session.get("title"), "notes": data.notes})
@@ -406,7 +411,7 @@ def _run_reprocess(chunk_index: int, audio_path: str, transcript: str):
 def _new_state(**values) -> dict:
     base = {"audio_path": None, "youtube_url": None, "transcript": None, "detected_language": None,
             "shlokas": None, "segments": None, "summary": None, "key_teachings": None, "notes": None,
-            "enhanced_notes": None, "chunk_index": 0, "current_agent": None, "error": None}
+            "enhanced_notes": None, "chunk_index": 0, "current_agent": None, "error": None, "digest": None}
     return {**base, **values}
 
 
@@ -440,6 +445,12 @@ def _run_graph(state: dict, chunk_index: int) -> dict:
                 _broadcast({"type": "stage_result", "chunk_index": chunk_index, "stage": "notes",
                             "notes": output.get("notes") or "", "enhanced_notes": output.get("enhanced_notes") or "",
                             "transliterated_notes": output.get("transliterated_notes") or ""})
+        # Checked between nodes, not just inside transcription's own piece
+        # loop — a cancel landing during shloka detection, structuring or
+        # summary (the three parallel LLM steps) still takes effect here,
+        # right after whichever one was in flight finishes.
+        if cancellation.is_cancelled(state.get("digest")):
+            raise cancellation.UploadCancelled("upload discarded by user")
     return result
 
 
@@ -454,6 +465,7 @@ def _session_from_result(result: dict, title: str | None, chunk_index: int, **ex
         "notes": result.get("notes"),
         "enhanced_notes": result.get("enhanced_notes"),
         "transliterated_notes": result.get("transliterated_notes"),
+        "notes_headings": result.get("notes_headings") or {},
         "shlokas": result.get("shlokas") or [],
         "segments": result.get("segments") or [],
         "transcript": result.get("transcript"),
@@ -512,27 +524,41 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
         f.write(content)
     title = os.path.splitext(file.filename or "")[0] or None
     background_tasks.add_task(run_pipeline_from_audio, audio_path, chunk_index, _live_session_id, digest, title)
-    return {"status": "processing", "chunk_index": chunk_index}
+    return {"status": "processing", "chunk_index": chunk_index, "digest": digest}
+
+
+@app.delete("/upload-audio/{digest}")
+async def cancel_upload(digest: str):
+    """Discard an upload still processing. Already in-flight API calls finish
+    (can't be force-killed mid-request), but no further work starts, and the
+    result is never saved as a session once it unwinds."""
+    cancellation.cancel(digest)
+    return {"status": "cancelling"}
 
 
 def run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0,
                             digest: str | None = None, title: str | None = None):
     try:
         with _pipeline_semaphore:
-            _run_pipeline_from_audio(audio_path, chunk_index, session_id, title)
+            _run_pipeline_from_audio(audio_path, chunk_index, session_id, title, digest)
     finally:
         _active_upload_hashes.discard(digest)
+        cancellation.clear(digest)
 
 
-def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0, title: str | None = None):
+def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0,
+                             title: str | None = None, digest: str | None = None):
     """An uploaded file: one pass over the whole file, one session."""
     try:
-        result = _run_graph(_new_state(audio_path=audio_path, chunk_index=chunk_index), chunk_index)
+        result = _run_graph(_new_state(audio_path=audio_path, chunk_index=chunk_index, digest=digest), chunk_index)
         session = _session_from_result(result, title, chunk_index)
         _save_chunk_result(audio_path, session)
         sessions_store.append(session)
         _save_sessions()
         _broadcast(session)
+    except cancellation.UploadCancelled:
+        print(f"[upload] chunk {chunk_index} discarded by user — not saved")
+        _broadcast({"type": "upload_cancelled", "chunk_index": chunk_index})
     except Exception as e:
         _report_failure(e, chunk_index)
 

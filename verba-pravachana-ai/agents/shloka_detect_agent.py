@@ -125,6 +125,41 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
     return {"shlokas": shlokas}
 
 
+_REALIGN_PAD_WORDS = 4   # how far past the LLM's own guessed edges to look
+_REALIGN_MIN_SCORE = 70  # below this, keep the LLM's original span rather than risk a worse one
+
+
+def _realign_to_library(norm_transcript: str, start: int, end: int, lib_text: str) -> tuple[int, int]:
+    """The LLM has to judge where Tamil/Sanskrit words end and Telugu
+    narration begins by meaning alone (both are written in the same Telugu
+    script here) — real recordings showed it drawing that line one word off,
+    on either edge, independently. Once a verse is confirmed against the
+    library, use the library's own (correct) wording to re-find the exact
+    boundary by sound, instead of trusting the LLM's guessed edges: search
+    every word-aligned substring in a small window around the original span
+    and keep whichever one sounds most like the verified line. Falls back to
+    the original span untouched if nothing in the window sounds close
+    enough — never guesses past what it can verify."""
+    from rapidfuzz import fuzz
+    words = [(m.start(), m.end()) for m in re.finditer(r"\S+", norm_transcript)]
+    in_range = [i for i, (a, b) in enumerate(words) if b > start and a < end]
+    if not in_range:
+        return start, end
+    lo = max(0, in_range[0] - _REALIGN_PAD_WORDS)
+    hi = min(len(words) - 1, in_range[-1] + _REALIGN_PAD_WORDS)
+    lib_skel = verse_library.skeleton(lib_text, "tamil")
+    best = None
+    for i in range(lo, hi + 1):
+        for j in range(i, hi + 1):
+            cand = norm_transcript[words[i][0]:words[j][1]]
+            score = fuzz.ratio(verse_library.skeleton(cand), lib_skel)
+            if best is None or score > best[0]:
+                best = (score, words[i][0], words[j][1])
+    if best is None or best[0] < _REALIGN_MIN_SCORE:
+        return start, end
+    return best[1], best[2]
+
+
 def _verify_with_library(norm_transcript: str, shlokas: list) -> list:
     """Attach the verified Tamil original to pasurams found in the Divya
     Prabandham, and add pasurams the LLM missed. The spoken text itself is
@@ -135,6 +170,13 @@ def _verify_with_library(norm_transcript: str, shlokas: list) -> list:
         m = verse_library.match_verse(s["text"])
         if m:
             print(f"  shloka matched to Divya Prabandham #{m['number']} (score {m['score']}): {s['text'][:40]!r}")
+            new_start, new_end = _realign_to_library(norm_transcript, s["start_index"], s["end_index"], m["lines"][0])
+            if (new_start, new_end) != (s["start_index"], s["end_index"]):
+                new_text = norm_transcript[new_start:new_end]
+                print(f"  boundary corrected to match the verified line: {new_text!r}")
+                s["text"] = new_text
+                s["start_index"], s["end_index"] = new_start, new_end
+                s["occurrences"] = [[new_start, new_end]]
             s.update({"language": "Tamil", "type": "Paasuram", "script_certain": True,
                       "original": verse_library.original_line(m), "reference": verse_library.reference(m)})
 
@@ -142,8 +184,14 @@ def _verify_with_library(norm_transcript: str, shlokas: list) -> list:
     for m in verse_library.find_pasurams(norm_transcript):
         if any(a < m["end"] and m["start"] < b for a, b in taken):
             continue
-        text = norm_transcript[m["start"]:m["end"]]
+        # find_pasurams's own window-sliding match has the same edge-drift as
+        # the LLM candidates above (it's matching skeleton n-grams, not whole
+        # words) — re-tighten the same way.
+        new_start, new_end = _realign_to_library(norm_transcript, m["start"], m["end"], m["lines"][0])
+        text = norm_transcript[new_start:new_end]
         spans = find_all(norm_transcript, text)
+        if not spans:
+            continue
         print(f"  pasuram found by library (missed by LLM): #{m['number']} score {m['score']}: {text[:40]!r}")
         shlokas.append({
             "language": "Tamil", "llm_language": None, "script_certain": True, "type": "Paasuram",

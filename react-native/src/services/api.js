@@ -65,6 +65,15 @@ export const uploadAudio = async (f, { live = false } = {}) => {
   return res.json();
 };
 
+/** Discard an upload still processing. Already-in-flight API calls finish on
+ * the backend (can't be force-killed mid-request), but nothing new starts
+ * and the result is never saved as a session. */
+export const cancelUpload = async (digest) => {
+  const res = await fetch(`${API_BASE}/upload-audio/${digest}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`cancel failed (${res.status})`);
+  return res.json();
+};
+
 /** A manual correction from the Reading screen's edit mode — replaces the
  * notes text outright (a human override, never re-validated). */
 export const updateNotes = async (sessionId, notes) => {

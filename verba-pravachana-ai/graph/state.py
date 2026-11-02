@@ -17,6 +17,7 @@ class VerbaState(TypedDict):
     notes: Optional[str]
     enhanced_notes: Optional[str]
     transliterated_notes: Optional[str]
+    notes_headings: Optional[dict]          # {paragraph index -> "మూలం N"} for moolam/para-marked paragraphs
     chunk_index: Optional[int]
     current_agent: Optional[str]
     error: Optional[str]
@@ -24,6 +25,7 @@ class VerbaState(TypedDict):
     transcript_segments: Optional[List[dict]]
     caption_text: Optional[str]
     live_piece: Optional[bool]             # one minute of a mic recording (preview only)
+    digest: Optional[str]                  # the uploaded file's content hash — lets a mid-flight cancel stop it
     validation_passed: Optional[bool]
     validation_errors: Optional[List[dict]]
     needs_manual_review: Optional[bool]

@@ -57,14 +57,74 @@ def _apply_term_fixes(text: str) -> tuple[str, int]:
 # speaker's own transcribed audio, since no example exists yet. If the ASR
 # renders it differently, this simply won't match anything; add the real
 # spelling here once a recording that uses it has been seen.
-_BRACKET_OPEN = re.compile(_W + r'బ్రాకెట్\s*(లో|ఓపెన్)' + _E)
-_BRACKET_CLOSE = re.compile(_W + r'బ్రాకెట్\s*క్లోజ్' + _E)
+# Covers the open/close said in either word order, plus "stop" as another
+# common way to say "end this".
+_BRACKET_OPEN = re.compile(_W + r'(?:బ్రాకెట్\s*(?:లో|ఓపెన్)|ఓపెన్\s*బ్రాకెట్)' + _E)
+_BRACKET_CLOSE = re.compile(_W + r'(?:బ్రాకెట్\s*(?:క్లోజ్|స్టాప్)|క్లోజ్\s*బ్రాకెట్)' + _E)
 
 
 def _apply_bracket_commands(text: str) -> tuple[str, int]:
     text, n_open = _BRACKET_OPEN.subn('(', text)
     text, n_close = _BRACKET_CLOSE.subn(')', text)
     return text, n_open + n_close
+
+
+# Same convention as the bracket command, for "put this in quotes" — a real
+# recording used exactly "ఇన్వర్టెడ్ కామాస్ ... అని ఇన్వర్టెడ్ కామాస్ ముగింపు"
+# (bare "inverted commas" to open, "... ముగింపు" — "ending" — to close, not
+# "క్లోజ్"). Covers the other ways this is commonly said too — "కామాస్" alone
+# (dropping "ఇన్వర్టెడ్"), "స్టాప్" as another way to say "end this", and
+# either word order. The close patterns are matched first since they're
+# strict extensions of the open phrase ("కామాస్" + a closing word) — matching
+# open first would swallow the shared prefix and leave the closing word
+# stranded as plain text. "కోట్" ("quote") is never matched bare — it's also
+# an ordinary Telugu word (fort), so only the unambiguous multi-word commands
+# are recognized.
+_COMMAS = r'(?:ఇన్వర్టెడ్\s*కామాస్|కామాస్)'
+_QUOTE_CLOSE = re.compile(
+    _W + rf'(?:{_COMMAS}\s*(?:ముగింపు|క్లోజ్|ఎండ్|స్టాప్)'
+         r'|అన్\s*కోట్'
+         r'|కోట్\s*(?:క్లోజ్|స్టాప్)|క్లోజ్\s*కోట్)' + _E
+)
+_QUOTE_OPEN = re.compile(
+    _W + rf'(?:{_COMMAS}(?:\s*(?:లో|ఓపెన్))?'
+         r'|కోట్\s*ఓపెన్|ఓపెన్\s*కోట్)' + _E
+)
+
+
+def _apply_quote_commands(text: str) -> tuple[str, int]:
+    text, n_close = _QUOTE_CLOSE.subn('"', text)
+    text, n_open = _QUOTE_OPEN.subn('"', text)
+    return text, n_open + n_close
+
+
+# The dictionary above only catches Tamil names already known to be
+# misread. Separately, the ASR sometimes writes a stray word straight in
+# Tamil script (its own script, not a Telugu misspelling) — any run of Tamil
+# Unicode characters, not just known names. For a Telugu-reading audience
+# that is unreadable as-is, so give it a Telugu-script reading the same way
+# verified Tamil pasurams already get one (transliteration_agent.py /
+# verbatim.py's tamil_to_telugu — a one-to-one script mapping, not a guess
+# at meaning), and keep the original right after it in brackets so nothing
+# is lost or silently rewritten.
+_TAMIL_RUN = re.compile(r'[஀-௿](?:[஀-௿\s]*[஀-௿])?')
+
+
+def _apply_tamil_transliteration(text: str) -> tuple[str, int]:
+    from agents.verbatim import tamil_to_telugu
+    count = 0
+
+    def repl(m):
+        nonlocal count
+        original = m.group(0)
+        telugu = tamil_to_telugu(original)
+        if not telugu:
+            return original  # transliteration failed — leave the original untouched, never drop it
+        count += 1
+        return f"{telugu} ({original})"
+
+    text = _TAMIL_RUN.sub(repl, text)
+    return text, count
 
 
 def correction_agent(state: VerbaState) -> VerbaState:
@@ -75,11 +135,17 @@ def correction_agent(state: VerbaState) -> VerbaState:
         return state
 
     state["raw_transcript"] = transcript
-    fixed, n = _apply_term_fixes(transcript)
+    fixed, n_tamil = _apply_tamil_transliteration(transcript)
+    fixed, n = _apply_term_fixes(fixed)
     fixed, n_brackets = _apply_bracket_commands(fixed)
-    n += n_brackets
+    fixed, n_quotes = _apply_quote_commands(fixed)
+    n += n_brackets + n_quotes + n_tamil
+    if n_tamil:
+        print(f"[correction] transliterated {n_tamil} raw Tamil-script fragment(s)")
     if n_brackets:
         print(f"[correction] converted {n_brackets} spoken bracket instruction(s)")
+    if n_quotes:
+        print(f"[correction] converted {n_quotes} spoken quote instruction(s)")
     if n:
         print(f"[correction] applied {n} term fix(es)")
         state["transcript"] = fixed

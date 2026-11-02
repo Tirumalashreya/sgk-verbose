@@ -19,33 +19,31 @@ function teluguFirst(text, original) {
   return { primary: text, bracket: '' };
 }
 
-function buildHTML(session, forPrint = false) {
-  const title   = esc(session.title || 'Pravachanam');
-  const notes   = session.notes || session.transcript || '';   // the notes are the full verbatim transcript
-  const shlokas = session.shlokas || [];
+function buildHTML(session, forPrint = false, titleOverride) {
+  const title    = esc(titleOverride || session.title || 'Pravachanam');
+  const notes    = session.notes || session.transcript || '';   // the notes are the full verbatim transcript
+  const headings = session.notes_headings || {};   // {paragraph index -> "మూలం N"}, keyed same as kit.js's ReadingText
 
-  const shlokaRows = shlokas.map((s, i) => {
-    // "original" carries " · <collection> <number>" when it's a confirmed library match — the
-    // number alone reads as a cryptic code, so say plainly it's a real pasuram checked against
-    // the source collection, not a guess (mirrors kit.js's VerseBlock, same reasoning).
-    const [origText, refText] = (s.original || '').split(' · ');
-    return `
-    <div class="shloka">
-      <span class="shloka-label">${esc((s.type || 'Shloka').toUpperCase())} ${i + 1}${s.language ? ' · ' + esc(s.language) : ''}</span>
-      <p class="shloka-text">${esc(s.text)}</p>
-      ${origText ? `<p class="shloka-original">${esc(origText)}</p>` : ''}
-      ${refText ? `<p class="shloka-original"><em>ధృవీకరించిన పాశురం · ${esc(refText)}</em></p>` : ''}
-    </div>
-  `;
-  }).join('');
+  // Shlokas render inline, right where they were spoken (below) — there's no
+  // separate summary list here, so a verse is never shown twice on the page.
 
+  // A moolam/para heading belongs to a whole paragraph (a \n\n-separated
+  // group, same indexing as the backend's notes_headings), tracked here by
+  // counting blank lines — mirrors kit.js's ReadingText exactly.
+  let paraIndex = 0, paraStarted = false;
+  const headingHTML = () => {
+    if (paraStarted) return '';
+    paraStarted = true;
+    const h = headings[paraIndex];
+    return h ? `<h3 class="moolam-heading">${esc(h)}</h3>` : '';
+  };
   const noteBlocks = notes.split('\n').map(line => {
     const t = line.trim();
-    if (!t) return '<br/>';
+    if (!t) { paraIndex += 1; paraStarted = false; return '<br/>'; }
     const whole = t.match(SHLOKA_LINE);
-    if (whole) return `<p class="shloka-text"><strong>"${esc(whole[1])}"</strong>${whole[2] ? `<br/><span class="shloka-original">${esc(whole[2])}</span>` : ''}</p>`;
+    if (whole) return `${headingHTML()}<p class="shloka-text"><strong>"${esc(whole[1])}"</strong>${whole[2] ? `<br/><span class="shloka-original">${esc(whole[2])}</span>` : ''}</p>`;
     const inline = [...t.matchAll(SHLOKA_MARK)];
-    if (!inline.length) return `<p>${esc(t)}</p>`;
+    if (!inline.length) return `${headingHTML()}<p>${esc(t)}</p>`;
     let html = '', last = 0;
     for (const m of inline) {
       html += esc(t.slice(last, m.index));
@@ -54,7 +52,7 @@ function buildHTML(session, forPrint = false) {
       last = m.index + m[0].length;
     }
     html += esc(t.slice(last));
-    return `<p>${html}</p>`;
+    return `${headingHTML()}<p>${html}</p>`;
   }).join('');
 
   return `<!DOCTYPE html>
@@ -73,6 +71,7 @@ function buildHTML(session, forPrint = false) {
     .section    { margin-bottom: 36px; }
     .section-title { font-size: 13px; letter-spacing: 2px; color: #b58a3c; text-transform: uppercase; border-bottom: 1px solid #e3d4b2; padding-bottom: 6px; margin-bottom: 16px; }
     h3          { font-size: 16px; color: #7a2e25; margin: 20px 0 6px; }
+    .moolam-heading { font-size: 19px; font-weight: 700; color: #8A1C36; margin: 24px 0 8px; }
     /* Notes body: bigger, bold, near-black, by request. Detected verses (the
        boxed ones below and the inline ones mixed into these paragraphs) are
        explicitly kept at their original size/weight, not inherited from this. */
@@ -94,21 +93,15 @@ function buildHTML(session, forPrint = false) {
     <div class="section-title">Notes</div>
     ${noteBlocks}
   </div>` : ''}
-
-  ${shlokas.length > 0 ? `
-  <div class="section">
-    <div class="section-title">Shlokas & Pasurams (${shlokas.length})</div>
-    ${shlokaRows}
-  </div>` : ''}
 </body>
 </html>`;
 }
 
-const fileName = (session, ext) =>
-  `${(session.title || 'pravachanam').replace(/[^a-z0-9\u0C00-\u0C7F ]/gi, '_').trim() || 'pravachanam'}.${ext}`;
+const fileName = (session, ext, customName) =>
+  `${(customName || session.title || 'pravachanam').replace(/[^a-z0-9\u0C00-\u0C7F ]/gi, '_').trim() || 'pravachanam'}.${ext}`;
 
-export async function downloadPDF(session) {
-  const html = buildHTML(session, true);
+export async function downloadPDF(session, customName) {
+  const html = buildHTML(session, true, customName);
   if (isWeb) {
     const win = window.open('', '_blank', 'width=800,height=900');
     if (!win) { notify('Pop-up blocked', 'Allow pop-ups for this site to save the PDF.'); return; }
@@ -121,7 +114,7 @@ export async function downloadPDF(session) {
   const Sharing = await import('expo-sharing');
   const FileSystemLegacy = await import('expo-file-system/legacy');
   const { uri } = await Print.printToFileAsync({ html });
-  const destUri = FileSystemLegacy.cacheDirectory + fileName(session, 'pdf');
+  const destUri = FileSystemLegacy.cacheDirectory + fileName(session, 'pdf', customName);
   // Both a file-to-file copy (the new File/Directory class API, then the
   // legacy copyAsync) failed reading expo-print's own output on Android, with
   // the real reason finally visible: "java.io.IOException: Location
@@ -132,17 +125,17 @@ export async function downloadPDF(session) {
   // Expo's own community has used as a workaround for exactly this.
   const base64 = await FileSystemLegacy.readAsStringAsync(uri, { encoding: 'base64' });
   await FileSystemLegacy.writeAsStringAsync(destUri, base64, { encoding: 'base64' });
-  await Sharing.shareAsync(destUri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileName(session, 'pdf') });
+  await Sharing.shareAsync(destUri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileName(session, 'pdf', customName) });
 }
 
-export async function downloadDOC(session) {
-  const html = buildHTML(session, false);
+export async function downloadDOC(session, customName) {
+  const html = buildHTML(session, false, customName);
   if (isWeb) {
     const blob = new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileName(session, 'doc');
+    a.download = fileName(session, 'doc', customName);
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -151,9 +144,9 @@ export async function downloadDOC(session) {
   }
   const { File, Paths } = await import('expo-file-system');
   const Sharing = await import('expo-sharing');
-  const file = new File(Paths.cache, fileName(session, 'doc'));
+  const file = new File(Paths.cache, fileName(session, 'doc', customName));
   if (file.exists) file.delete();
   file.create();
   await file.write('\ufeff' + html);   // SDK 58: File.write() is async now \u2014 unawaited, the share below could fire early
-  await Sharing.shareAsync(file.uri, { mimeType: 'application/msword', UTI: 'com.microsoft.word.doc', dialogTitle: fileName(session, 'doc') });
+  await Sharing.shareAsync(file.uri, { mimeType: 'application/msword', UTI: 'com.microsoft.word.doc', dialogTitle: fileName(session, 'doc', customName) });
 }
