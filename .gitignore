@@ -23,6 +23,7 @@ outputs/
 # Logs and runtime data
 *.log
 sessions.json
+sessions.db
 
 # macOS
 .DS_Store

@@ -659,6 +659,6 @@ def test_empty_sessions_are_dropped_on_load(monkeypatch, tmp_path):
     import api
     monkeypatch.chdir(tmp_path)
     (tmp_path / "sessions.json").write_text(json.dumps([
-        {"title": "Live Recording", "transcript": "", "notes": ""},
-        {"title": "real", "transcript": "ప్రవచనం", "notes": "ప్రవచనం"}]), encoding="utf-8")
+        {"id": "empty-1", "title": "Live Recording", "transcript": "", "notes": ""},
+        {"id": "real-1", "title": "real", "transcript": "ప్రవచనం", "notes": "ప్రవచనం"}]), encoding="utf-8")
     assert [s["title"] for s in api._load_sessions()] == ["real"]

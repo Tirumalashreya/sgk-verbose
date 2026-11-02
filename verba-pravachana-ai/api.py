@@ -54,29 +54,89 @@ class ConnectionManager:
                 pass
 
 
-SESSIONS_FILE = "sessions.json"
+import json
+import sqlite3
+
+# A flat JSON file had two real problems in practice: every save rewrote the
+# whole thing (no partial-write safety — a crash mid-write could corrupt
+# every session, not just the one being saved), and nothing stopped two
+# saves landing at the same instant from interleaving (the lock below only
+# patched that second half). SQLite's own transactions solve both: a write
+# either lands completely or not at all, and the database file itself
+# handles concurrent access safely — no file-level lock needed anymore.
+# Each session is still just "a dict", read and written whole, exactly as
+# sessions_store (and every endpoint that mutates it) already expects —
+# only the storage underneath changed, not the thirty-odd call sites above
+# that treat sessions_store as a plain in-memory list.
+SESSIONS_FILE = "sessions.json"   # the old file — read once, to migrate, then left alone
+DB_FILE = "sessions.db"
+
+
+def _db():
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at TEXT, data TEXT NOT NULL)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
+    return conn
+
+
+def _migrate_json_to_db_if_needed():
+    """One-time: if sessions.db has never been populated but the old
+    sessions.json has real data in it, import every session exactly as it
+    stood — nothing here is reachable again once the database has rows, so
+    this never re-runs or overwrites a later edit."""
+    if not os.path.exists(SESSIONS_FILE):
+        return
+    with _db() as conn:
+        if conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] > 0:
+            return
+        try:
+            with open(SESSIONS_FILE, encoding="utf-8") as f:
+                old = json.load(f)
+        except Exception as e:
+            print(f"[sessions] could not read sessions.json for migration: {e}")
+            return
+        if not isinstance(old, list) or not old:
+            return
+        for s in old:
+            sid = s.get("id")
+            if not sid:
+                continue
+            conn.execute("INSERT OR REPLACE INTO sessions (id, created_at, data) VALUES (?, ?, ?)",
+                         (sid, s.get("created_at") or "", json.dumps(s, ensure_ascii=False)))
+        conn.commit()
+        print(f"[sessions] migrated {len(old)} session(s) from sessions.json into {DB_FILE}")
+
 
 def _load_sessions():
-    try:
-        with open(SESSIONS_FILE) as f:
-            sessions = json.load(f)
-    except Exception:
-        return []
+    _migrate_json_to_db_if_needed()
+    with _db() as conn:
+        rows = conn.execute("SELECT data FROM sessions ORDER BY created_at").fetchall()
+    sessions = [json.loads(r[0]) for r in rows]
     # A session with no transcript and no notes is a leftover of a recording
     # that captured nothing (e.g. Stop pressed straight away) — never show it
     return [x for x in sessions if (x.get("transcript") or "").strip() or (x.get("notes") or "").strip()]
 
-_save_lock = threading.Lock()   # two uploads finishing at the same instant must not interleave their writes
-
 
 def _save_sessions():
+    """sessions_store is the full in-memory list after whatever just changed
+    — sync the table to match it in one transaction: every current session
+    written, anything no longer in the list (a delete) removed. Either this
+    all lands or none of it does; there's nothing in between to corrupt."""
     try:
-        with _save_lock, open(SESSIONS_FILE, "w") as f:
-            json.dump(sessions_store, f, ensure_ascii=False)
+        with _db() as conn:
+            current_ids = {s["id"] for s in sessions_store if s.get("id")}
+            existing_ids = {r[0] for r in conn.execute("SELECT id FROM sessions").fetchall()}
+            for gone_id in existing_ids - current_ids:
+                conn.execute("DELETE FROM sessions WHERE id = ?", (gone_id,))
+            for s in sessions_store:
+                sid = s.get("id")
+                if not sid:
+                    continue
+                conn.execute("INSERT OR REPLACE INTO sessions (id, created_at, data) VALUES (?, ?, ?)",
+                             (sid, s.get("created_at") or "", json.dumps(s, ensure_ascii=False)))
+            conn.commit()
     except Exception as e:
         print(f"[sessions] save failed: {e}")
-
-import json
 
 
 def _review_fields(result: dict, chunk_index: int) -> dict:
