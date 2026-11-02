@@ -12,6 +12,9 @@ export const storage = {
   async set(key, value) {
     try { await AsyncStorage.setItem(key, value); } catch {}
   },
+  async remove(key) {
+    try { await AsyncStorage.removeItem(key); } catch {}
+  },
 };
 
 /** Ask before something destructive. Resolves true when confirmed. */

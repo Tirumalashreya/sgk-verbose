@@ -12,10 +12,11 @@ import { Suravaram_400Regular } from '@expo-google-fonts/suravaram';
 
 import { useTheme, palettes } from './src/theme';
 import { makeT } from './src/i18n';
-import { getSessions } from './src/services/api';
+import { getSessions, getCredentials, setUnauthorizedHandler } from './src/services/api';
 import { storage } from './src/services/platform';
 import NavBar from './src/ui/NavBar';
 import IntroScreen from './src/screens/IntroScreen';
+import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import LiveScreen from './src/screens/LiveScreen';
 import ReadingScreen from './src/screens/ReadingScreen';
@@ -34,6 +35,7 @@ export default function App() {
   });
   const [ready, setReady] = useState(false);
   const [showIntro, setShowIntro] = useState(true);   // the photo page opens every launch
+  const [loggedIn, setLoggedIn] = useState(false);     // credentials found on this device, or just signed in
   const [lang, setLangState] = useState('te');
   const [stack, setStack] = useState(['home']);
   const [params, setParams] = useState({});
@@ -48,9 +50,15 @@ export default function App() {
     (async () => {
       const savedLang = await storage.get('lang');
       if (savedLang) setLangState(savedLang);
+      const creds = await getCredentials();
+      if (creds) setLoggedIn(true);
       setReady(true);
     })();
   }, []);
+  // One place for every screen's 401s to land, instead of each API call
+  // having to notice its own failure and navigate — api.js already cleared
+  // the bad credentials by the time this fires, so just drop back to Login.
+  useEffect(() => { setUnauthorizedHandler(() => setLoggedIn(false)); }, []);
   useEffect(() => { if (fontsLoaded && ready) SplashScreen.hideAsync().catch(() => {}); }, [fontsLoaded, ready]);
 
   const setLang = (l) => { setLangState(l); storage.set('lang', l); };
@@ -96,6 +104,15 @@ export default function App() {
       <SafeAreaProvider>
         <StatusBar style="light" />
         <IntroScreen t={t} lang={lang} onDone={() => setShowIntro(false)} />
+      </SafeAreaProvider>
+    );
+  }
+
+  if (!loggedIn) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="dark" />
+        <LoginScreen t={t} onLoggedIn={() => setLoggedIn(true)} />
       </SafeAreaProvider>
     );
   }

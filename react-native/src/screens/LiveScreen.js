@@ -71,8 +71,12 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
   useEffect(() => {
-    const ws = createWebSocket((d) => onMessageRef.current(d));
-    return () => ws.close();
+    let ws, cancelled = false;
+    createWebSocket((d) => onMessageRef.current(d)).then((socket) => {
+      if (cancelled) { socket.close(); return; }   // unmounted before the auth token lookup finished
+      ws = socket;
+    });
+    return () => { cancelled = true; ws?.close(); };
   }, []);
 
   const finish = (session) => {
