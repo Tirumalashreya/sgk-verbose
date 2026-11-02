@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, UploadFile, File, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
@@ -9,8 +9,14 @@ from datetime import datetime
 from graph.orchestrator import app as langgraph_app
 from agents.rag_agent import rag_agent
 from agents import cancellation
+from auth import verify_credentials, verify_ws_token, auth_enabled
 
-app = FastAPI()
+# One dependency, applied to every REST route at once — this is what makes
+# the fixed username/password actually required, not just available. The
+# websocket route doesn't get covered by this (FastAPI's app-level
+# dependencies don't reach WebSocket routes), so it's checked by hand,
+# right inside that one handler below.
+app = FastAPI(dependencies=[Depends(verify_credentials)])
 
 
 # ── Sidecar helpers ────────────────────────────────────────────────────────────
@@ -235,7 +241,10 @@ def _build_continuation(earlier: dict) -> dict:
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, token: str | None = None):
+    if not verify_ws_token(token):
+        await websocket.close(code=4401)   # 4401: custom close code in the app-reserved range (4000-4999), mirroring HTTP 401
+        return
     await manager.connect(websocket)
     try:
         while True:
