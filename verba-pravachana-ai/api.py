@@ -1,22 +1,59 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, UploadFile, File, Form, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, UploadFile, File, Form, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import asyncio
+import re
 import threading
 import os
+import time
 import uuid
 from datetime import datetime
 from graph.orchestrator import app as langgraph_app
 from agents.rag_agent import rag_agent
 from agents import cancellation
-from auth import verify_credentials, verify_ws_token, auth_enabled
+from auth import check_basic_header, verify_ws_token, auth_enabled, username_from_header, check_admin_header
 
-# One dependency, applied to every REST route at once — this is what makes
-# the fixed username/password actually required, not just available. The
-# websocket route doesn't get covered by this (FastAPI's app-level
-# dependencies don't reach WebSocket routes), so it's checked by hand,
-# right inside that one handler below.
-app = FastAPI(dependencies=[Depends(verify_credentials)])
+app = FastAPI()
+
+
+class BasicAuthMiddleware(BaseHTTPMiddleware):
+    """Guards every REST route with the fixed username/password. A plain
+    app-level `Depends(verify_credentials)` looked like it would do this,
+    but FastAPI's HTTPBasic security class isn't WebSocket-safe — wired up
+    that way it crashed (500) the moment the /ws route's own handshake hit
+    it, since HTTPBasic expects an HTTP Request, not a WebSocket scope.
+    BaseHTTPMiddleware only runs for scope["type"] == "http" and leaves
+    websocket connections alone, so /ws keeps using its own token check.
+
+    The web build's own static files (index.html, its JS bundle, fonts) are
+    the one exception: they have to load before the app's JS can even show
+    its Login screen or attach a stored Basic Auth header to anything. A
+    browser-level auth popup in front of blank nothing would be worse than
+    just letting the app shell load — the real data underneath is still
+    behind this same check on every API route."""
+    _PUBLIC_PATHS = {"/", "/index.html", "/metadata.json", "/favicon.ico"}
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if path == "/admin" or path.startswith("/admin/"):
+            # Entirely separate credentials from the 10 regular app logins —
+            # this never checks APP_USERS, so no app user can land here even
+            # by guessing the URL.
+            if not check_admin_header(request.headers.get("authorization")):
+                return Response(status_code=401, headers={"WWW-Authenticate": "Basic"})
+            return await call_next(request)
+        is_public_static = request.method == "GET" and (
+            path in self._PUBLIC_PATHS or path.startswith("/_expo/") or path.startswith("/assets/")
+        )
+        if not is_public_static and not check_basic_header(request.headers.get("authorization")):
+            return Response(status_code=401, headers={"WWW-Authenticate": "Basic"})
+        request.state.username = username_from_header(request.headers.get("authorization")) or "dev"
+        return await call_next(request)
+
+
+app.add_middleware(BasicAuthMiddleware)
 
 
 # ── Sidecar helpers ────────────────────────────────────────────────────────────
@@ -175,7 +212,12 @@ _live_session_id: int = 0
 # benefit. A real cap still matters (ffmpeg conversion and audio I/O run on
 # this one Mac's CPU, not a remote service), just a much higher one.
 _pipeline_semaphore = threading.Semaphore(int(os.getenv("MAX_CONCURRENT_PIPELINES", "8")))
-_live_recording_session: dict | None = None   # the mic recording currently being captured
+_live_recording_sessions: dict[str, dict] = {}   # the mic recording each user is currently capturing — one
+                                                 # per logged-in username, so two people recording at the
+                                                 # same moment never share (and garble) one document
+_last_stopped_sessions: dict[str, dict] = {}    # briefly kept per user after /stop-session, so a late piece
+_last_stopped_at: dict[str, float] = {}         # that was already mid-upload lands on it, not a new note
+LATE_PIECE_GRACE_SECONDS = 10
 _live_lock = threading.Lock()                 # guards each live session's "pending" piece count
 _live_by_id: dict[str, dict] = {}            # mic recordings made since start-up, by id (for "continue")
 _active_upload_hashes: set[str] = set()  # uploads queued or processing — identical re-uploads are ignored
@@ -198,27 +240,37 @@ def _recover_live_sessions():
     only thing missing was restoring *which* saved session is still being
     recorded into. Reuses the exact "continue" construction /start-live already
     uses for the Continue prompt — recovery is just that, triggered here instead
-    of by the app."""
-    global _live_recording_session
+    of by the app.
+
+    One recording can be "still in progress" per user, not just one overall —
+    two different people can each have had a live recording running when the
+    server restarted, and both deserve to resume rather than only whichever
+    was more recent."""
     now = datetime.utcnow()
     in_progress = [s for s in sessions_store if s.get("live_in_progress")]
     if not in_progress:
         return
-    # Only one recording can really be "the one still in progress" — the most
-    # recently updated marker is it; any others are leftovers from an earlier
-    # crash and get closed out properly instead of left stuck.
-    in_progress.sort(key=lambda s: s.get("last_piece_at") or s.get("created_at") or "", reverse=True)
-    newest, *rest = in_progress
-    age_minutes = (now - datetime.fromisoformat(newest.get("last_piece_at") or newest.get("created_at"))).total_seconds() / 60
-    if age_minutes <= RESUME_WINDOW_MINUTES:
-        _live_recording_session = _build_continuation(newest)
-        _live_by_id[newest["id"]] = _live_recording_session
-        print(f"[live] resumed in-progress recording {newest['id'][:8]} after restart ({age_minutes:.1f} min old)")
-    else:
-        rest = [newest] + rest  # too old to still count as "the same recording in progress"
-    for s in rest:
-        print(f"[live] finalizing orphaned in-progress recording {s['id'][:8]}")
-        threading.Thread(target=_finalize_live_session, args=(_build_continuation(s),), daemon=True).start()
+    by_user: dict[str | None, list[dict]] = {}
+    for s in in_progress:
+        by_user.setdefault(s.get("created_by"), []).append(s)
+    for user, sessions in by_user.items():
+        # Only one recording can really be "the one still in progress" for a
+        # given user — the most recently updated marker is it; any others are
+        # leftovers from an earlier crash and get closed out properly instead
+        # of left stuck.
+        sessions.sort(key=lambda s: s.get("last_piece_at") or s.get("created_at") or "", reverse=True)
+        newest, *rest = sessions
+        age_minutes = (now - datetime.fromisoformat(newest.get("last_piece_at") or newest.get("created_at"))).total_seconds() / 60
+        if age_minutes <= RESUME_WINDOW_MINUTES:
+            resumed = _build_continuation(newest)
+            _live_recording_sessions[user] = resumed
+            _live_by_id[newest["id"]] = resumed
+            print(f"[live] resumed in-progress recording {newest['id'][:8]} for {user} after restart ({age_minutes:.1f} min old)")
+        else:
+            rest = [newest] + rest  # too old to still count as "the same recording in progress"
+        for s in rest:
+            print(f"[live] finalizing orphaned in-progress recording {s['id'][:8]} for {user}")
+            threading.Thread(target=_finalize_live_session, args=(_build_continuation(s),), daemon=True).start()
 
 
 def _build_continuation(earlier: dict) -> dict:
@@ -226,7 +278,7 @@ def _build_continuation(earlier: dict) -> dict:
     (possibly unfinished) one: its saved text becomes a fixed prefix, and new
     minute-pieces are appended after it."""
     session = {
-        **{k: earlier.get(k) for k in ("id", "type", "title", "created_at", "notes", "enhanced_notes",
+        **{k: earlier.get(k) for k in ("id", "type", "title", "created_at", "created_by", "notes", "enhanced_notes",
                                         "transliterated_notes", "summary", "asr_provider")},
         "transcript": earlier.get("transcript") or "",
         "raw_transcript": earlier.get("raw_transcript") or earlier.get("transcript") or "",
@@ -258,35 +310,65 @@ class SessionRequest(BaseModel):
 
 
 @app.post("/start-session")
-async def start_session(data: SessionRequest, background_tasks: BackgroundTasks):
+async def start_session(data: SessionRequest, background_tasks: BackgroundTasks, request: Request):
     global _pipeline_thread
     # Stop any currently running pipeline
     stop_event.set()
     if _pipeline_thread and _pipeline_thread.is_alive():
         _pipeline_thread.join(timeout=3)
     stop_event.clear()
-    background_tasks.add_task(run_pipeline, data.youtube_url)
+    background_tasks.add_task(run_pipeline, data.youtube_url, request.state.username)
     return {"status": "started", "youtube_url": data.youtube_url}
 
 
+class StopSessionRequest(BaseModel):
+    live_session_id: str | None = None   # which recording to stop — see /upload-audio's live_session_id
+
+
 @app.post("/stop-session")
-async def stop_session():
+async def stop_session(request: Request, data: StopSessionRequest | None = None):
     """Stop a YouTube run or a mic recording. A recording's notes are rebuilt
-    once over the whole transcript as soon as its last piece is processed."""
-    global _live_session_id, _live_recording_session
+    once over the whole transcript as soon as its last piece is processed.
+
+    Stops the specific recording named by live_session_id when the app sent
+    one (every build from here on does) — not just "whatever is in this
+    username's slot", which could be a different phone's recording if the
+    same shared login is being used by two people at once. Only falls back
+    to the username slot for an older client that hasn't sent an id yet."""
+    global _live_session_id
+    username = request.state.username
     stop_event.set()
     _live_session_id += 1
-    session, _live_recording_session = _live_recording_session, None
+    target_id = data.live_session_id if data else None
+    if target_id:
+        session = _live_by_id.get(target_id)
+        if session is None or session.get("created_by") != username:
+            session = None   # unknown id, or belongs to someone else — nothing to stop
+        elif _live_recording_sessions.get(username) is session:
+            # Only clear the per-username convenience slot if it still points
+            # at *this* recording — a different device under the same shared
+            # login may have since started a newer one there, and that one
+            # must be left alone.
+            del _live_recording_sessions[username]
+    else:
+        session = _live_recording_sessions.pop(username, None)
     if session is not None:
         with _live_lock:
             session["stopped"] = True
             session["stopped_at"] = datetime.utcnow().isoformat()
             ready = session["pending"] == 0
+        _last_stopped_sessions[username], _last_stopped_at[username] = session, time.time()
         for stored in sessions_store:          # so the app can offer "continue" right away
             if stored.get("id") == session["id"]:
                 stored["stopped_at"] = session["stopped_at"]
         if ready:
-            threading.Thread(target=_finalize_live_session, args=(session,), daemon=True).start()
+            def _delayed_finalize(sess):
+                time.sleep(2.5)
+                with _live_lock:
+                    if sess["pending"] > 0:
+                        return
+                _finalize_live_session(sess)
+            threading.Thread(target=_delayed_finalize, args=(session,), daemon=True).start()
     return {"status": "stopped"}
 
 
@@ -295,28 +377,35 @@ class StartLiveRequest(BaseModel):
 
 
 @app.post("/start-live")
-async def start_live(data: StartLiveRequest | None = None):
-    global _live_recording_session, _live_session_id
+async def start_live(request: Request, data: StartLiveRequest | None = None):
+    global _live_session_id
     _live_session_id += 1
     continue_id = data.continue_id if data else None
-    if continue_id in _live_by_id:
+    username = getattr(request.state, "username", None) if request else None
+    # Only the user's own recording (live-in-memory or already saved) can be
+    # continued — one username's "continue?" prompt should never be able to
+    # attach new audio onto someone else's pravachanam.
+    if continue_id in _live_by_id and _live_by_id[continue_id].get("created_by") == username:
         # Still in memory (maybe still finishing): reopen it; its next stop rebuilds the notes over everything
         session = _live_by_id[continue_id]
         with _live_lock:
             session["stopped"] = False
-        _live_recording_session = session
-        return {"status": "ok", "continued": continue_id}
-    earlier = next((s for s in sessions_store if continue_id and s.get("id") == continue_id), None)
+        _live_recording_sessions[username] = session
+        return {"status": "ok", "continued": continue_id, "id": session["id"]}
+    earlier = next((s for s in sessions_store if continue_id and s.get("id") == continue_id
+                     and s.get("created_by") == username), None)
     if earlier is not None:
         # Continue: same notes, same id; the new minutes are appended to its transcript
-        _live_recording_session = _build_continuation(earlier)
-        _live_by_id[earlier["id"]] = _live_recording_session
-        return {"status": "ok", "continued": earlier["id"]}
-    _live_recording_session = {
+        session = _build_continuation(earlier)
+        _live_recording_sessions[username] = session
+        _live_by_id[earlier["id"]] = session
+        return {"status": "ok", "continued": earlier["id"], "id": session["id"]}
+    session = {
         "id": str(uuid.uuid4()),
         "type": "chunk_complete",
         "title": "Live Recording – " + datetime.now().strftime("%d %b %Y, %H:%M"),
         "created_at": datetime.utcnow().isoformat(),
+        "created_by": username,
         "transcript": "", "notes": "", "enhanced_notes": "", "transliterated_notes": "",
         "summary": "", "shlokas": [], "segments": [],
         "pieces": [],          # per-minute results, in recording order (preview only)
@@ -327,8 +416,9 @@ async def start_live(data: StartLiveRequest | None = None):
         "last_piece_at": datetime.utcnow().isoformat(),
         "pieces_done": 0,              # real minute-pieces processed, for an accurate resume after a restart
     }
-    _live_by_id[_live_recording_session["id"]] = _live_recording_session
-    return {"status": "ok"}
+    _live_recording_sessions[username] = session
+    _live_by_id[session["id"]] = session
+    return {"status": "ok", "id": session["id"]}
 
 
 class SearchRequest(BaseModel):
@@ -346,20 +436,102 @@ async def health():
     return {"status": "ok"}
 
 
+def _recent_errors(limit: int = 30) -> list[dict]:
+    """Parses pipeline_errors.log's blocks (separated by a row of '='). Older
+    entries (written before per-user tracking existed) have no '— by X' and
+    just show as 'unknown' — that's real, not a parsing bug."""
+    if not os.path.exists(ERROR_LOG_FILE):
+        return []
+    with open(ERROR_LOG_FILE, encoding="utf-8") as f:
+        raw = f.read()
+    entries = []
+    for block in raw.split("=" * 70):
+        block = block.strip("\n")
+        if not block:
+            continue
+        lines = block.split("\n")
+        header = lines[0]
+        m = re.match(r"^(\S+) — chunk (\S+)(?: — by (\S+))?", header)
+        if not m:
+            continue
+        entries.append({
+            "when": m.group(1), "chunk": m.group(2), "by": m.group(3) or "unknown",
+            "detail": "\n".join(lines[1:]).strip()[-800:],   # last part of the traceback — the actual exception
+        })
+    return list(reversed(entries))[:limit]
+
+
+@app.get("/admin", response_class=Response)
+async def admin_page():
+    import html as _html
+    sessions = sorted(sessions_store, key=lambda s: s.get("created_at") or "", reverse=True)
+    def _session_row(s):
+        is_deleted = bool(s.get("deleted"))
+        is_archived = bool(s.get("archived"))
+        open_tag = "<tr style='opacity:0.45; text-decoration: line-through;'>" if is_deleted else ("<tr style='opacity:0.6'>" if is_archived else "<tr>")
+        kind = "live" if s.get("live") else ("youtube" if s.get("youtube_url") else "upload")
+        if is_deleted:
+            who = _html.escape(s.get("deleted_by") or "user")
+            visibility = f"<span style='color:#ff8787'>Deleted by {who}</span>"
+        elif is_archived:
+            visibility = "<span style='color:#868e96'>archived</span>"
+        else:
+            visibility = "<span style='color:#51cf66'>visible</span>"
+        return (
+            f"{open_tag}<td>{_html.escape(s.get('created_at') or '')}</td>"
+            f"<td>{_html.escape(s.get('title') or '')}</td>"
+            f"<td>{_html.escape(s.get('created_by') or '—')}</td>"
+            f"<td>{kind}</td><td>{len(s.get('notes') or '')}</td>"
+            f"<td>{visibility}</td></tr>"
+        )
+    rows = "".join(_session_row(s) for s in sessions[:200])
+    errors = _recent_errors()
+    error_rows = "".join(
+        f"<tr><td>{_html.escape(e['when'])}</td><td>{_html.escape(e['chunk'])}</td>"
+        f"<td>{_html.escape(e['by'])}</td>"
+        f"<td><pre>{_html.escape(e['detail'])}</pre></td></tr>"
+        for e in errors
+    ) or "<tr><td colspan='4'>No errors logged.</td></tr>"
+    page = f"""<!doctype html><html><head><meta charset="utf-8">
+<title>SGKS Notes — Admin</title>
+<style>
+body {{ font-family: -apple-system, sans-serif; background: #1a1625; color: #eee; padding: 24px; }}
+h1, h2 {{ color: #d8b26a; }}
+table {{ border-collapse: collapse; width: 100%; margin-bottom: 36px; font-size: 13px; }}
+td, th {{ border: 1px solid #443d5c; padding: 6px 10px; text-align: left; vertical-align: top; }}
+th {{ background: #2a2340; }}
+pre {{ white-space: pre-wrap; margin: 0; font-size: 11px; color: #f0a0a0; max-width: 600px; }}
+tr:nth-child(even) {{ background: #221d35; }}
+</style></head><body>
+<h1>SGKS Notes — Admin</h1>
+<h2>Sessions ({len(sessions)} total)</h2>
+<table><tr><th>Created</th><th>Title</th><th>By</th><th>Type</th><th>Notes length</th><th>In app?</th></tr>{rows}</table>
+<h2>Recent errors (last {len(errors)})</h2>
+<table><tr><th>When</th><th>Chunk</th><th>By</th><th>Detail</th></tr>{error_rows}</table>
+</body></html>"""
+    return Response(content=page, media_type="text/html")
+
+
 @app.get("/sessions")
-async def get_sessions():
-    return {"sessions": sessions_store}
+async def get_sessions(request: Request):
+    # Strict per-user isolation: Each logged-in user only sees their own
+    # notes and recordings on their Home and History screens.
+    username = request.state.username
+    return {"sessions": [s for s in sessions_store if not s.get("archived") and not s.get("deleted") and s.get("created_by") == username]}
 
 
 @app.get("/sessions/{session_id}/timestamps")
-async def get_timestamps(session_id: str, force: bool = False):
+async def get_timestamps(session_id: str, request: Request, force: bool = False):
     """Notes with [MM:SS] markers, anchored to the real audio — computed
     once per session and cached on it (notes_timestamped), since building
     it re-transcribes the recording's audio. 404 if there's no audio left
     on disk to anchor against; the app checks this before offering the
-    option, so a 404 here means the option shouldn't have been shown."""
+    option, so a 404 here means the option shouldn't have been shown. Also
+    404 (not 403) for someone else's session — same response either way, so
+    a session id doesn't reveal whether it exists."""
     from fastapi import HTTPException
-    session = next((s for s in sessions_store if s.get("id") == session_id), None)
+    username = request.state.username
+    session = next((s for s in sessions_store if s.get("id") == session_id and s.get("created_by") == username), None)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     if not force and session.get("notes_timestamped"):
@@ -372,7 +544,14 @@ async def get_timestamps(session_id: str, force: bool = False):
     def _build_locked():
         with _pipeline_semaphore:   # don't contend with an active recording's own transcription
             return nt.build(session)
-    out = await asyncio.get_event_loop().run_in_executor(None, _build_locked)
+    try:
+        out = await asyncio.get_event_loop().run_in_executor(None, _build_locked)
+    except Exception as e:
+        # A raw exception here crashed the connection outright instead of
+        # reaching the app as a normal error response — confirmed: the app
+        # saw it as "failed to fetch", not a readable error message.
+        print(f"[timestamps] build failed for {session_id[:8]}: {str(e)[:200]}")
+        raise HTTPException(status_code=500, detail="Could not build timestamps for this recording")
     if out is None:
         raise HTTPException(status_code=404, detail="Could not align any audio to this recording's notes")
     session["notes_timestamped"] = out
@@ -385,35 +564,40 @@ class UpdateNotesRequest(BaseModel):
 
 
 @app.put("/sessions/{session_id}/notes")
-async def update_notes(session_id: str, data: UpdateNotesRequest):
+async def update_notes(session_id: str, data: UpdateNotesRequest, request: Request):
     """A manual correction from the Reading screen's edit mode. Replaces the
     notes text outright — no re-validation, this is a human overriding the
     pipeline's output on purpose. Clears any cached timestamped version,
     since it was built from the text before this edit and would no longer
     line up; the next request for it rebuilds fresh."""
     from fastapi import HTTPException
-    session = next((s for s in sessions_store if s.get("id") == session_id), None)
+    username = request.state.username
+    session = next((s for s in sessions_store if s.get("id") == session_id and s.get("created_by") == username), None)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     session["notes"] = data.notes
     session["enhanced_notes"] = data.notes
     session["edited"] = True
+    session["edited_by"] = username
     session.pop("notes_timestamped", None)
     session.pop("notes_headings", None)   # paragraph indices no longer line up with the edited text
     _save_sessions()
     _broadcast({"type": "chunk_complete", "chunk_index": session.get("chunk_index", 0),
-                "title": session.get("title"), "notes": data.notes})
+                "title": session.get("title"), "notes": data.notes, "created_by": username})
     return {"status": "saved"}
 
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, request: Request):
     global sessions_store
-    original_len = len(sessions_store)
-    sessions_store = [s for s in sessions_store if str(s.get("id", "")) != session_id]
-    if len(sessions_store) == original_len:
+    username = request.state.username
+    target = next((s for s in sessions_store if str(s.get("id", "")) == session_id and s.get("created_by") == username), None)
+    if target is None:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Session not found")
+    target["deleted"] = True
+    target["deleted_by"] = username
+    target["deleted_at"] = datetime.utcnow().isoformat()
     _save_sessions()
     return {"status": "deleted"}
 
@@ -559,7 +743,7 @@ def _session_from_result(result: dict, title: str | None, chunk_index: int, **ex
 ERROR_LOG_FILE = "pipeline_errors.log"
 
 
-def _report_failure(e: Exception, chunk_index: int):
+def _report_failure(e: Exception, chunk_index: int, created_by: str | None = None):
     """This only fires once every retry and fallback this pipeline has has
     already been exhausted (both Gemini providers down, or a genuine code
     bug) — everything recoverable (a rate limit, one provider's billing
@@ -572,11 +756,12 @@ def _report_failure(e: Exception, chunk_index: int):
     a stack trace."""
     import traceback
     tb = traceback.format_exc()
-    print(f"[PIPELINE ERROR] chunk {chunk_index}: {e}")
+    who = created_by or "unknown"
+    print(f"[PIPELINE ERROR] chunk {chunk_index} (by {who}): {e}")
     print(tb)
     try:
         with open(ERROR_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"\n{'=' * 70}\n{datetime.utcnow().isoformat()} — chunk {chunk_index}\n{tb}\n")
+            f.write(f"\n{'=' * 70}\n{datetime.utcnow().isoformat()} — chunk {chunk_index} — by {who}\n{tb}\n")
     except Exception as log_err:
         print(f"[PIPELINE ERROR] could not write to {ERROR_LOG_FILE}: {log_err}")
     try:
@@ -594,11 +779,24 @@ def _report_failure(e: Exception, chunk_index: int):
 
 
 @app.post("/upload-audio")
-async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...),
-                       live: str | None = Form(None)):
+async def upload_audio(request: Request, background_tasks: BackgroundTasks, file: UploadFile = File(...),
+                       live: str | None = Form(None), live_session_id: str | None = Form(None)):
     """A whole audio file → one session. With live=1 it is the next one-minute
-    piece of the mic recording in progress instead."""
-    global _live_session_id, _live_recording_session
+    piece of the mic recording in progress instead.
+
+    Which recording a piece belongs to is decided by live_session_id (the id
+    /start-live returned, which the app now sends back on every piece) when
+    given — not by username. Username alone isn't unique: the same shared
+    login can be used by two different phones at once (this app hands out a
+    short, memorable list of logins, not individual accounts), and routing
+    by username would merge their audio into one document the moment the
+    second phone's /start-live overwrote the first phone's slot. Routing by
+    this recording's own id can't collide that way — two phones under the
+    same username get two different ids and stay fully separate. The
+    per-username lookup only remains as a fallback for a piece that somehow
+    arrives with no id attached."""
+    global _live_session_id
+    username = getattr(request.state, "username", None)
     import hashlib
     content = await file.read()
     digest = hashlib.sha1(content).hexdigest()
@@ -610,9 +808,23 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
     ext = os.path.splitext(file.filename or "chunk.webm")[1] or ".webm"
 
     if live == "1":
-        if _live_recording_session is None:      # piece arrived without /start-live
-            await start_live()
-        session = _live_recording_session
+        session = _live_by_id.get(live_session_id) if live_session_id else None
+        if session is None:
+            if username not in _live_recording_sessions:      # piece arrived without /start-live
+                last_stopped = _last_stopped_sessions.get(username)
+                if last_stopped is not None and time.time() - _last_stopped_at.get(username, 0) < LATE_PIECE_GRACE_SECONDS:
+                    # Not actually a new recording — recorder.stop() resolves once
+                    # the last piece's upload *starts*, not once the server has
+                    # finished processing it, so that piece can legitimately still
+                    # be in flight when /stop-session clears the pointer. Route it
+                    # back into the recording it belongs to instead of silently
+                    # starting a fresh, never-closed note with it (confirmed this
+                    # happened for real — a recording's own closing line ended up
+                    # orphaned in exactly this way).
+                    _live_recording_sessions[username] = last_stopped
+                else:
+                    await start_live(request)
+            session = _live_recording_sessions[username]
         with _live_lock:
             piece = len(session["pieces"])
             session["pieces"].append(None)
@@ -629,7 +841,7 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
     with open(audio_path, "wb") as f:
         f.write(content)
     title = os.path.splitext(file.filename or "")[0] or None
-    background_tasks.add_task(run_pipeline_from_audio, audio_path, chunk_index, _live_session_id, digest, title)
+    background_tasks.add_task(run_pipeline_from_audio, audio_path, chunk_index, _live_session_id, digest, title, username)
     return {"status": "processing", "chunk_index": chunk_index, "digest": digest}
 
 
@@ -643,21 +855,23 @@ async def cancel_upload(digest: str):
 
 
 def run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0,
-                            digest: str | None = None, title: str | None = None):
+                            digest: str | None = None, title: str | None = None,
+                            created_by: str | None = None):
     try:
         with _pipeline_semaphore:
-            _run_pipeline_from_audio(audio_path, chunk_index, session_id, title, digest)
+            _run_pipeline_from_audio(audio_path, chunk_index, session_id, title, digest, created_by)
     finally:
         _active_upload_hashes.discard(digest)
         cancellation.clear(digest)
 
 
 def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int = 0,
-                             title: str | None = None, digest: str | None = None):
+                             title: str | None = None, digest: str | None = None,
+                             created_by: str | None = None):
     """An uploaded file: one pass over the whole file, one session."""
     try:
         result = _run_graph(_new_state(audio_path=audio_path, chunk_index=chunk_index, digest=digest), chunk_index)
-        session = _session_from_result(result, title, chunk_index)
+        session = _session_from_result(result, title, chunk_index, created_by=created_by)
         _save_chunk_result(audio_path, session)
         sessions_store.append(session)
         _save_sessions()
@@ -666,7 +880,7 @@ def _run_pipeline_from_audio(audio_path: str, chunk_index: int, session_id: int 
         print(f"[upload] chunk {chunk_index} discarded by user — not saved")
         _broadcast({"type": "upload_cancelled", "chunk_index": chunk_index})
     except Exception as e:
-        _report_failure(e, chunk_index)
+        _report_failure(e, chunk_index, created_by=created_by)
 
 
 def run_live_piece(session: dict, piece: int, audio_path: str, digest: str):
@@ -691,7 +905,7 @@ def run_live_piece(session: dict, piece: int, audio_path: str, digest: str):
                     "notes": result.get("notes"), "shlokas": result.get("shlokas") or [],
                     "transcript": result.get("transcript")})
     except Exception as e:
-        _report_failure(e, piece)
+        _report_failure(e, piece, created_by=session.get("created_by"))
     finally:
         _active_upload_hashes.discard(digest)
         with _live_lock:
@@ -737,8 +951,10 @@ def _finalize_live_session(session: dict):
                                      raw_transcript=session.get("raw_transcript"),
                                      asr_provider=session.get("asr_provider"),
                                      pieces_recorded=session.get("prior_pieces", 0) + len(pieces),
-                                     stopped_at=session.get("stopped_at"), live=True)
+                                     stopped_at=session.get("stopped_at"), live=True,
+                                     created_by=session.get("created_by"))
         final["id"], final["created_at"] = session["id"], session["created_at"]
+        final["created_by"] = session.get("created_by")
         for i, s in enumerate(sessions_store):
             if s.get("id") == session["id"]:
                 sessions_store[i] = final
@@ -746,10 +962,10 @@ def _finalize_live_session(session: dict):
         else:
             sessions_store.append(final)
         _save_sessions()
-        _broadcast({"type": "session_complete", "session_id": session["id"]})
+        _broadcast({"type": "session_complete", "session_id": session["id"], "session": final})
         print("[live] recording finalized")
     except Exception as e:
-        _report_failure(e, 0)
+        _report_failure(e, 0, created_by=session.get("created_by"))
 
 
 class MergeRequest(BaseModel):
@@ -757,13 +973,15 @@ class MergeRequest(BaseModel):
 
 
 @app.post("/merge-sessions")
-async def merge_sessions(data: MergeRequest):
+async def merge_sessions(data: MergeRequest, request: Request):
     """Join several recordings of one pravachanam into one set of notes, in the
     order they were recorded. The earliest keeps its id and title."""
     from fastapi import HTTPException
-    found = sorted((s for s in sessions_store if s.get("id") in set(data.ids)), key=lambda s: s.get("created_at") or "")
+    username = request.state.username
+    found = sorted((s for s in sessions_store if s.get("id") in set(data.ids) and s.get("created_by") == username),
+                   key=lambda s: s.get("created_at") or "")
     if len(found) < 2 or len(found) != len(set(data.ids)):
-        raise HTTPException(status_code=400, detail="Need at least two existing sessions")
+        raise HTTPException(status_code=400, detail="Need at least two existing sessions belonging to this user")
     threading.Thread(target=_merge_sessions, args=(found,), daemon=True).start()
     return {"status": "merging", "into": found[0]["id"]}
 
@@ -780,16 +998,18 @@ def _merge_sessions(found: list[dict]):
         merged = _session_from_result({**result, "transcript": transcript}, first.get("title"), 0,
                                       raw_transcript=raw, asr_provider=first.get("asr_provider"),
                                       pieces_recorded=sum(int(s.get("pieces_recorded") or 1) for s in found),
-                                      stopped_at=found[-1].get("stopped_at"), live=True)
+                                      stopped_at=found[-1].get("stopped_at"), live=True,
+                                      created_by=first.get("created_by"))
         merged["id"], merged["created_at"] = first["id"], first["created_at"]
+        merged["created_by"] = first.get("created_by")
         gone = {s["id"] for s in found[1:]}
         _forget_memory([f"live:{i}" for i in gone])
         sessions_store = [merged if s.get("id") == first["id"] else s for s in sessions_store if s.get("id") not in gone]
         _save_sessions()
-        _broadcast({"type": "session_complete", "session_id": first["id"]})
+        _broadcast({"type": "session_complete", "session_id": first["id"], "session": merged})
         print("[merge] done")
     except Exception as e:
-        _report_failure(e, 0)
+        _report_failure(e, 0, created_by=first.get("created_by"))
 
 
 def _forget_memory(sources: list[str]):
@@ -800,7 +1020,7 @@ def _forget_memory(sources: list[str]):
         collection.delete(where={"source": source})
 
 
-def run_pipeline(youtube_url: str):
+def run_pipeline(youtube_url: str, created_by: str | None = None):
     """A YouTube video: the whole audio (or its captions) in one pass, one session."""
     global _pipeline_thread
     _pipeline_thread = threading.current_thread()
@@ -809,10 +1029,19 @@ def run_pipeline(youtube_url: str):
             result = _run_graph(_new_state(youtube_url=youtube_url), 0)
         if stop_event.is_set():
             return
-        session = _session_from_result({**result, "youtube_url": youtube_url}, None, 0)
+        session = _session_from_result({**result, "youtube_url": youtube_url}, None, 0, created_by=created_by)
         sessions_store.append(session)
         _save_sessions()
         _broadcast(session)
         _broadcast({"type": "session_complete", "total_chunks": 1})
     except Exception as e:
-        _report_failure(e, 0)
+        _report_failure(e, 0, created_by=created_by)
+
+
+# The web build (react-native/dist, synced here as ./web) — mounted last, so
+# every @app route above still wins; this only catches what nothing else
+# matched. html=True serves index.html for "/" and for any path with no file
+# extension, which is what a browser refresh needs even though this app has
+# no server-side routes of its own (it's one page with in-memory view state).
+if os.path.isdir("web"):
+    app.mount("/", StaticFiles(directory="web", html=True), name="web")
