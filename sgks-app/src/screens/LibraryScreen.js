@@ -21,18 +21,22 @@ export default function LibraryScreen({ navigation }) {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const refreshSessions = async () => {
+    setLoading(true);
+    try {
+      const data = await getSessions();
+      setSessions((data.sessions || []).reverse());
+    } catch {
+      setSessions([]);
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const load = async () => {
-      try {
-        const data = await getSessions();
-        setSessions((data.sessions || []).reverse());
-      } catch {
-        setSessions([]);
-      }
-      setLoading(false);
-    };
-    load();
-  }, []);
+    refreshSessions();
+    const unsubscribe = navigation.addListener('focus', refreshSessions);
+    return unsubscribe;
+  }, [navigation]);
 
   const filtered = sessions;
 
@@ -65,7 +69,7 @@ export default function LibraryScreen({ navigation }) {
           ) : (
             filtered.map((session, idx) => (
               <TouchableOpacity
-                key={idx}
+                key={session.id || `session-${idx}`}
                 onPress={() => navigation.navigate('SessionDetail', { session })}
               >
                 <LinearGradient

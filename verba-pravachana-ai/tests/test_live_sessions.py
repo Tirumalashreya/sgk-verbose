@@ -6,12 +6,27 @@ import pytest
 import api
 
 
+class _FakeState:
+    def __init__(self, username):
+        self.username = username
+
+
+class _FakeRequest:
+    """start_live/stop_session read only request.state.username — this is
+    all these direct (non-HTTP) calls need, standing in for the real
+    Request object FastAPI would normally inject."""
+    def __init__(self, username="alice"):
+        self.state = _FakeState(username)
+
+
 @pytest.fixture
 def store(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(api, "sessions_store", [])
     monkeypatch.setattr(api, "_live_by_id", {})
-    monkeypatch.setattr(api, "_live_recording_session", None)
+    monkeypatch.setattr(api, "_live_recording_sessions", {})
+    monkeypatch.setattr(api, "_last_stopped_sessions", {})
+    monkeypatch.setattr(api, "_last_stopped_at", {})
     monkeypatch.setattr(api, "_broadcast", lambda message: None)
     monkeypatch.setattr(api, "_forget_memory", lambda sources: None)
     # The text steps just echo the transcript as notes
@@ -20,17 +35,18 @@ def store(monkeypatch, tmp_path):
     return api
 
 
-def _earlier(id_, transcript, created, pieces=1):
+def _earlier(id_, transcript, created, pieces=1, created_by="alice"):
     return {"id": id_, "type": "chunk_complete", "title": f"Live Recording {id_}", "created_at": created,
+            "created_by": created_by,
             "transcript": transcript, "raw_transcript": transcript, "notes": transcript,
             "pieces_recorded": pieces, "live": True}
 
 
 def test_continue_appends_to_the_same_notes(store):
     store.sessions_store.append(_earlier("a1", "first part", "2026-10-15T09:46:00", pieces=2))
-    res = asyncio.run(store.start_live(store.StartLiveRequest(continue_id="a1")))
+    res = asyncio.run(store.start_live(_FakeRequest("alice"), store.StartLiveRequest(continue_id="a1")))
     assert res["continued"] == "a1"
-    session = store._live_recording_session
+    session = store._live_recording_sessions["alice"]
     session["pieces"].append({"transcript": "second part", "notes": "second part"})
     # what run_live_piece does after a piece is transcribed
     done = [p for p in [session["prefix"]] + session["pieces"] if p]
@@ -44,17 +60,17 @@ def test_continue_appends_to_the_same_notes(store):
 
 
 def test_continue_reopens_a_recording_still_in_memory(store):
-    asyncio.run(store.start_live())
-    first = store._live_recording_session
-    asyncio.run(store.stop_session())
-    res = asyncio.run(store.start_live(store.StartLiveRequest(continue_id=first["id"])))
+    asyncio.run(store.start_live(_FakeRequest("alice")))
+    first = store._live_recording_sessions["alice"]
+    asyncio.run(store.stop_session(_FakeRequest("alice")))
+    res = asyncio.run(store.start_live(_FakeRequest("alice"), store.StartLiveRequest(continue_id=first["id"])))
     assert res["continued"] == first["id"]
-    assert store._live_recording_session is first and first["stopped"] is False
+    assert store._live_recording_sessions["alice"] is first and first["stopped"] is False
 
 
 def test_unknown_continue_id_starts_new_notes(store):
-    res = asyncio.run(store.start_live(store.StartLiveRequest(continue_id="nope")))
-    assert "continued" not in res and store._live_recording_session["id"] != "nope"
+    res = asyncio.run(store.start_live(_FakeRequest("alice"), store.StartLiveRequest(continue_id="nope")))
+    assert "continued" not in res and store._live_recording_sessions["alice"]["id"] != "nope"
 
 
 def test_merge_joins_in_recorded_order_and_keeps_the_first(store):

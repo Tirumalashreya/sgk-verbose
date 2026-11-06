@@ -1,4 +1,4 @@
-// Intro — the Acharya's photo fills the whole page; SGKS Notes, recording waves, one action.
+// Intro — the Acharya's photo fills the whole page; SGK'S Notes, recording waves, one action.
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,7 +23,7 @@ export default function IntroScreen({ onDone, t }) {
           <Waveform color={c.brassBright} accent={c.kumkumText} height={52} />
         </Enter>
         <Enter delay={150} style={{ alignItems: 'center', marginTop: S.xxl }}>
-          <Text style={[T.display, st.title, { color: c.ink }]}>SGKS Notes</Text>
+          <Text style={[T.display, st.title, { color: c.ink }]}>SGK'S Notes</Text>
           <Text style={[T.caption, { color: c.brass, marginTop: S.m }]}>{ACHARYA.toUpperCase()}</Text>
           <Text style={{ fontFamily: F.read, fontSize: 13.5, color: c.inkSoft, marginTop: 4 }}>{ACHARYA_TE}</Text>
           <Text style={[T.body, { color: c.inkSoft, textAlign: 'center', marginTop: S.l }]}>Every word of the pravachanam, kept.</Text>

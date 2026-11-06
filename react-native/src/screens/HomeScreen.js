@@ -3,12 +3,12 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, RefreshControl, StyleSheet } from 'react-native';
 import { useTheme, F, T, S, R, ACHARYA_TE, ACHARYA } from '../theme';
 import { Screen, Enter, ActionTile, SessionRow, Portrait, Overline, Button } from '../ui/kit';
-import { getSessions } from '../services/api';
+import { getSessions, createWebSocket } from '../services/api';
 import { pickAudioFile } from '../services/platform';
 
 const isTe = (s) => /[ఀ-౿]/.test(s || '');
 
-export default function HomeScreen({ go, t, lang, setLang, upload }) {
+export default function HomeScreen({ go, t, lang, upload }) {
   const c = useTheme();
   const [sessions, setSessions] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -19,6 +19,14 @@ export default function HomeScreen({ go, t, lang, setLang, upload }) {
     try { setSessions(((await getSessions()).sessions || []).slice().reverse()); } catch {}
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    let ws;
+    createWebSocket((data) => {
+      if (data.type === 'session_complete' || data.type === 'chunk_complete') load();
+    }).then((w) => { ws = w; }).catch(() => {});
+    return () => { ws?.close?.(); };
+  }, [load]);
 
   const busy = upload && ['uploading', 'processing'].includes(upload.status);
   const onUpload = async () => {
@@ -43,11 +51,6 @@ export default function HomeScreen({ go, t, lang, setLang, upload }) {
           <Text style={[T.title, { color: c.ink, fontSize: 22 }]}>{t('appName')}</Text>
           <Text style={[{ fontFamily: F.read, fontSize: 12.5, lineHeight: 20 }, { color: c.muted }]} numberOfLines={1}>{lang === 'te' ? ACHARYA_TE : ACHARYA}</Text>
         </View>
-        <Pressable onPress={() => setLang(lang === 'te' ? 'en' : 'te')} accessibilityRole="button"
-          accessibilityLabel={lang === 'te' ? 'Switch to English' : 'తెలుగుకు మార్చండి'}
-          style={[st.lang, { borderColor: c.line, backgroundColor: c.surface }]}>
-          <Text style={{ fontFamily: lang === 'te' ? F.uiSemi : F.readMed, fontSize: 14, color: c.brass }}>{lang === 'te' ? 'EN' : 'తె'}</Text>
-        </Pressable>
       </Enter>
 
       <Enter delay={60}>

@@ -4,7 +4,7 @@ import { View, Text, TextInput, Pressable, RefreshControl, StyleSheet } from 're
 import { useTheme, F, T, S, R } from '../theme';
 import { Screen, Enter, SessionRow, Overline } from '../ui/kit';
 import Icon from '../ui/Icon';
-import { getSessions, deleteSession } from '../services/api';
+import { getSessions, deleteSession, createWebSocket } from '../services/api';
 import { confirm } from '../services/platform';
 
 export default function HistoryScreen({ go, t, lang }) {
@@ -17,6 +17,14 @@ export default function HistoryScreen({ go, t, lang }) {
     try { setSessions(((await getSessions()).sessions || []).slice().reverse()); } catch {}
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    let ws;
+    createWebSocket((data) => {
+      if (data.type === 'session_complete' || data.type === 'chunk_complete') load();
+    }).then((w) => { ws = w; }).catch(() => {});
+    return () => { ws?.close?.(); };
+  }, [load]);
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();

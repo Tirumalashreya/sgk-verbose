@@ -13,7 +13,6 @@ import { Suravaram_400Regular } from '@expo-google-fonts/suravaram';
 import { useTheme, palettes } from './src/theme';
 import { makeT } from './src/i18n';
 import { getSessions, getCredentials, setUnauthorizedHandler } from './src/services/api';
-import { storage } from './src/services/platform';
 import NavBar from './src/ui/NavBar';
 import IntroScreen from './src/screens/IntroScreen';
 import LoginScreen from './src/screens/LoginScreen';
@@ -36,7 +35,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [showIntro, setShowIntro] = useState(true);   // the photo page opens every launch
   const [loggedIn, setLoggedIn] = useState(false);     // credentials found on this device, or just signed in
-  const [lang, setLangState] = useState('te');
+  const lang = 'en';   // UI chrome is always English now — only recorded content stays Telugu
   const [stack, setStack] = useState(['home']);
   const [params, setParams] = useState({});
   // In-flight upload { name, status: uploading|processing|error, startedAt } — lives here so it
@@ -48,8 +47,6 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const savedLang = await storage.get('lang');
-      if (savedLang) setLangState(savedLang);
       const creds = await getCredentials();
       if (creds) setLoggedIn(true);
       setReady(true);
@@ -60,8 +57,6 @@ export default function App() {
   // the bad credentials by the time this fires, so just drop back to Login.
   useEffect(() => { setUnauthorizedHandler(() => setLoggedIn(false)); }, []);
   useEffect(() => { if (fontsLoaded && ready) SplashScreen.hideAsync().catch(() => {}); }, [fontsLoaded, ready]);
-
-  const setLang = (l) => { setLangState(l); storage.set('lang', l); };
 
   const go = useCallback((s, p = {}) => {
     setParams((prev) => ({ ...prev, ...p }));
@@ -118,7 +113,7 @@ export default function App() {
   }
 
   const shared = {
-    go, back, t, lang, setLang, upload, setUpload,
+    go, back, t, lang, upload, setUpload,
     pendingUpload: params.upload, clearPendingUpload: () => setParams((p) => ({ ...p, upload: null })),
     pendingLink: params.link, clearPendingLink: () => setParams((p) => ({ ...p, link: null })),
   };

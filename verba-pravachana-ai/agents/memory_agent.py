@@ -1,6 +1,29 @@
 from graph.state import VerbaState
+import threading
 import uuid
 import chromadb
+
+_client = None
+_client_lock = threading.Lock()
+
+
+def _get_collection():
+    """One PersistentClient for the whole process, created once and reused —
+    not a fresh one per call. ChromaDB's SharedSystemClient keeps a single
+    registry of open clients keyed by path; building (and then letting
+    garbage-collection tear down) a new client every call raced that shared
+    registry whenever two pipeline runs overlapped (this app allows up to 8
+    at once), confirmed by real crashes: 'KeyError: chroma_db' and a torn-down
+    Rust binding, both from two clients being created/released for the same
+    path at the same moment. One long-lived client sidesteps that entirely."""
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = chromadb.PersistentClient(path="chroma_db")
+    return _client.get_or_create_collection(name="notes_collection")
+
+
 def memory_agent(state: VerbaState) -> VerbaState:
     if state.get("live_piece"):
         # One minute of a recording still in progress: the whole recording is
@@ -8,8 +31,7 @@ def memory_agent(state: VerbaState) -> VerbaState:
         state["current_agent"] = "memory_done"
         return state
     segments = state.get("segments") or []
-    client = chromadb.PersistentClient(path="chroma_db")
-    collection = client.get_or_create_collection(name="notes_collection")
+    collection = _get_collection()
     documents = []
     metadatas = []
     ids = []

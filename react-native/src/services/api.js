@@ -87,8 +87,14 @@ export const getSessions = async () => {
   return res.json();
 };
 
-export const stopSession = async () => {
-  const res = await apiFetch('/stop-session', { method: 'POST' });
+/** liveSessionId: the id /start-live returned — stops that exact recording,
+ * not just "whatever this login's most recent one was" (the same shared
+ * login can be in use on two phones at once). */
+export const stopSession = async (liveSessionId) => {
+  const res = await apiFetch('/stop-session', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ live_session_id: liveSessionId || null }),
+  });
   return res.json();
 };
 
@@ -118,13 +124,16 @@ async function filePart(f) {
 }
 
 /** Upload a whole audio file ({ name, uri, type, file? }). With live, it is the
- *  next minute of the mic recording in progress. */
-export const uploadAudio = async (f, { live = false } = {}) => {
+ *  next minute of the mic recording in progress — liveSessionId (from
+ *  startLive's response) says exactly which one, so two phones sharing one
+ *  login never land pieces in the same document. */
+export const uploadAudio = async (f, { live = false, liveSessionId } = {}) => {
   const formData = new FormData();
   const part = await filePart(f);
   if (isWeb) formData.append('file', part, f.name || 'upload.mp3');
   else formData.append('file', part);
   if (live) formData.append('live', '1');
+  if (live && liveSessionId) formData.append('live_session_id', liveSessionId);
   const res = await apiFetch('/upload-audio', { method: 'POST', body: formData });
   if (!res.ok) throw new Error(`upload failed (${res.status})`);
   return res.json();
@@ -140,13 +149,25 @@ export const cancelUpload = async (digest) => {
 };
 
 /** A manual correction from the Reading screen's edit mode — replaces the
- * notes text outright (a human override, never re-validated). */
-export const updateNotes = async (sessionId, notes) => {
+ * notes text and/or title outright (a human override, never re-validated). */
+export const updateNotes = async (sessionId, notes, title) => {
+  const payload = {};
+  if (notes !== undefined) payload.notes = notes;
+  if (title !== undefined) payload.title = title;
   const res = await apiFetch(`/sessions/${sessionId}/notes`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ notes }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`save failed (${res.status})`);
+  return res.json();
+};
+
+export const updateSessionTitle = async (sessionId, title) => {
+  const res = await apiFetch(`/sessions/${sessionId}/title`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) throw new Error(`rename failed (${res.status})`);
   return res.json();
 };
 

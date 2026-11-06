@@ -560,31 +560,58 @@ async def get_timestamps(session_id: str, request: Request, force: bool = False)
 
 
 class UpdateNotesRequest(BaseModel):
-    notes: str
+    notes: str | None = None
+    title: str | None = None
 
 
 @app.put("/sessions/{session_id}/notes")
 async def update_notes(session_id: str, data: UpdateNotesRequest, request: Request):
     """A manual correction from the Reading screen's edit mode. Replaces the
-    notes text outright — no re-validation, this is a human overriding the
-    pipeline's output on purpose. Clears any cached timestamped version,
-    since it was built from the text before this edit and would no longer
+    notes text and/or title outright — no re-validation, this is a human overriding
+    the pipeline's output on purpose. Clears any cached timestamped version if notes
+    were changed, since it was built from the text before this edit and would no longer
     line up; the next request for it rebuilds fresh."""
     from fastapi import HTTPException
     username = request.state.username
     session = next((s for s in sessions_store if s.get("id") == session_id and s.get("created_by") == username), None)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    session["notes"] = data.notes
-    session["enhanced_notes"] = data.notes
+    if data.notes is not None:
+        session["notes"] = data.notes
+        session["enhanced_notes"] = data.notes
+        session.pop("notes_timestamped", None)
+        session.pop("notes_headings", None)   # paragraph indices no longer line up with the edited text
+    if data.title is not None and data.title.strip():
+        session["title"] = data.title.strip()
     session["edited"] = True
     session["edited_by"] = username
-    session.pop("notes_timestamped", None)
-    session.pop("notes_headings", None)   # paragraph indices no longer line up with the edited text
     _save_sessions()
     _broadcast({"type": "chunk_complete", "chunk_index": session.get("chunk_index", 0),
-                "title": session.get("title"), "notes": data.notes, "created_by": username})
-    return {"status": "saved"}
+                "title": session.get("title"), "notes": session.get("notes"), "created_by": username})
+    return {"status": "saved", "title": session.get("title")}
+
+
+class UpdateTitleRequest(BaseModel):
+    title: str
+
+
+@app.put("/sessions/{session_id}/title")
+async def update_title(session_id: str, data: UpdateTitleRequest, request: Request):
+    """Update only the title/name of a session."""
+    from fastapi import HTTPException
+    username = request.state.username
+    session = next((s for s in sessions_store if s.get("id") == session_id and s.get("created_by") == username), None)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    new_title = data.title.strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    session["title"] = new_title
+    session["edited"] = True
+    session["edited_by"] = username
+    _save_sessions()
+    _broadcast({"type": "session_complete", "session_id": session["id"], "session": session, "created_by": username})
+    return {"status": "saved", "title": new_title}
 
 
 @app.delete("/sessions/{session_id}")

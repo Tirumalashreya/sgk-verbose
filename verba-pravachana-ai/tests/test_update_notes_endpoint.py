@@ -20,7 +20,7 @@ def test_404_for_an_unknown_session(monkeypatch):
 
 
 def test_saves_the_edited_text(monkeypatch):
-    session = {"id": "s1", "notes": "పాత నోట్స్", "enhanced_notes": "పాత నోట్స్"}
+    session = {"id": "s1", "created_by": "dev", "notes": "పాత నోట్స్", "enhanced_notes": "పాత నోట్స్"}
     sessions = [session]
     client = _client(monkeypatch, sessions)
     res = client.put("/sessions/s1/notes", json={"notes": "సరిదిద్దిన నోట్స్"})
@@ -31,7 +31,7 @@ def test_saves_the_edited_text(monkeypatch):
 
 
 def test_clears_the_cached_timestamped_version(monkeypatch):
-    session = {"id": "s1", "notes": "పాత", "notes_timestamped": "[00:00] పాత"}
+    session = {"id": "s1", "created_by": "dev", "notes": "పాత", "notes_timestamped": "[00:00] పాత"}
     client = _client(monkeypatch, [session])
     client.put("/sessions/s1/notes", json={"notes": "కొత్త"})
     assert "notes_timestamped" not in session

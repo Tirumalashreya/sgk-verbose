@@ -592,7 +592,9 @@ def api_env(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(api, "sessions_store", [])
     monkeypatch.setattr(api, "_active_upload_hashes", set())
-    monkeypatch.setattr(api, "_live_recording_session", None)
+    monkeypatch.setattr(api, "_live_recording_sessions", {})
+    monkeypatch.setattr(api, "_last_stopped_sessions", {})
+    monkeypatch.setattr(api, "_last_stopped_at", {})
     monkeypatch.setattr(api, "_save_chunk_result", lambda *a: None)
     text_runs = []
 
@@ -631,7 +633,7 @@ def test_mic_recording_becomes_one_session_with_notes_built_once(api_env):
 def test_recording_finalizes_only_after_its_last_piece(api_env, monkeypatch):
     api, client, text_runs = api_env
     client.post("/start-live")
-    session = api._live_recording_session
+    session = api._live_recording_sessions["dev"]
     session["pending"] = 1                                   # a minute still being processed
     client.post("/stop-session")
     assert text_runs == []                                   # not yet

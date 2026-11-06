@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Dimensions, TextInput, KeyboardAvoidingView, Platform,
@@ -32,6 +32,13 @@ export default function SessionDetailScreen({ route, navigation }) {
   const [editingEnhanced, setEditingEnhanced] = useState(false);
   const [draftNotes, setDraftNotes] = useState('');
   const [draftEnhanced, setDraftEnhanced] = useState('');
+
+  useEffect(() => {
+    setLocalNotes(session?.notes || '');
+    setLocalEnhanced(session?.enhanced_notes || session?.notes || '');
+    if (!editingNotes) setDraftNotes(session?.notes || '');
+    if (!editingEnhanced) setDraftEnhanced(session?.enhanced_notes || session?.notes || '');
+  }, [session, editingNotes, editingEnhanced]);
 
   const segments = session?.segments || [];
   const shlokas = session?.shlokas || [];

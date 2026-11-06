@@ -53,8 +53,16 @@ def _concat_live_pieces(session_id: str) -> str | None:
         return None
     out_dir = os.path.join("audio_input", ".work")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"concat_{session_id[:8]}.m4a")
-    if os.path.exists(out_path):
+    # .webm, not .m4a: each piece is Opus-in-WebM, and stream-copying Opus
+    # straight into an MP4/.m4a container isn't something ffmpeg's muxer
+    # supports (confirmed: "Could not find tag for codec opus in container"
+    # — it fails but still leaves a 0-byte file behind, which then looked
+    # like a valid cached result forever after and crashed every later
+    # request that tried to read it). Concatenating into the pieces' own
+    # native container works, and costs nothing extra since it's still a
+    # stream copy, not a re-encode.
+    out_path = os.path.join(out_dir, f"concat_{session_id[:8]}.webm")
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         return out_path
     list_file = out_path + ".txt"
     with open(list_file, "w", encoding="utf-8") as f:
@@ -67,8 +75,12 @@ def _concat_live_pieces(session_id: str) -> str | None:
         )
     except Exception as e:
         print(f"[notes_timestamp] could not concatenate live pieces: {e}")
+        if os.path.exists(out_path):
+            os.remove(out_path)   # a failed ffmpeg run can still leave a 0-byte file — don't cache that as success
         return None
-    return out_path if os.path.exists(out_path) else None
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        return None
+    return out_path
 
 
 def _find_audio(session: dict) -> str | None:

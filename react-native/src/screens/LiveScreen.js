@@ -18,6 +18,11 @@ const isTe = (s) => /[ఀ-౿]/.test(s || '');
 const CONTINUE_WINDOW_MS = 15 * 60 * 1000;   // pressing Record soon after Stop offers to continue
 const utc = (iso) => Date.parse(/Z|[+-]\d\d:\d\d$/.test(iso || '') ? iso : `${iso}Z`);
 const fmt = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const fmtHMS = (ms) => {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+};
 const audioType = (uri) => (isWeb || /\.webm/i.test(uri) ? 'audio/webm' : /\.(m4a|mp4|aac)/i.test(uri) ? 'audio/mp4' : /\.wav/i.test(uri) ? 'audio/wav' : 'audio/mpeg');
 
 export default function LiveScreen({ go, back, t, upload, setUpload, pendingUpload, clearPendingUpload, pendingLink, clearPendingLink }) {
@@ -35,11 +40,13 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
   const pausedAt = useRef(0);
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const liveSessionId = useRef(null);   // identifies *this* recording on the server, not just this login —
+                                        // the same shared username can be recording on another phone at once
 
   const recorder = useMinuteRecorder(async (uri) => {
     const n = pieces.current++;
     const ext = (uri.match(/\.(\w+)(\?|$)/) || [])[1] || (isWeb ? 'webm' : 'm4a');
-    try { await uploadAudio({ uri, name: `minute-${n + 1}.${ext}`, type: audioType(uri) }, { live: true }); }
+    try { await uploadAudio({ uri, name: `minute-${n + 1}.${ext}`, type: audioType(uri) }, { live: true, liveSessionId: liveSessionId.current }); }
     catch (e) { console.warn('[live] minute upload failed', e); }
   });
 
@@ -62,7 +69,8 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
       if (m === 'recording' && data.transcript) setPreview((p) => [...p, data.transcript].slice(-6));
       else if (m === 'processing' && data.id) finish(data);          // finished upload / YouTube session
     } else if (data.type === 'session_complete' && m === 'saving') {
-      openSession(data.session_id);
+      if (data.session) finish(data.session);
+      else openSession(data.session_id);
     } else if (data.type === 'pipeline_error' && (m === 'processing' || m === 'saving')) {
       setError(data.message || ''); setMode('error');
       setUpload?.((u) => (u ? { ...u, status: 'error', message: data.message } : u));
@@ -86,12 +94,16 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
     setTimeout(() => go('reading', { session }), 700);
   };
 
-  const openSession = async (id) => {
+  const openSession = async (id, retries = 3) => {
     try {
       const list = (await getSessions()).sessions || [];
       const s = list.find((x) => x.id === id);
       if (s) return finish(s);
     } catch {}
+    if (retries > 0) {
+      setTimeout(() => openSession(id, retries - 1), 1000);
+      return;
+    }
     go('history');
   };
 
@@ -143,7 +155,8 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
         .filter((s) => (s.live || s.pieces_recorded) && Date.now() - utc(s.stopped_at || s.created_at) < CONTINUE_WINDOW_MS)
         .pop();
       if (last && await choose(t('continueTitle'), t('continueHint')(last.title), t('continueYes'), t('continueNo'))) continueId = last.id;
-      await startLive(continueId);
+      const started = await startLive(continueId);
+      liveSessionId.current = started?.id || null;
       await recorder.start();
       startedAt.current = Date.now(); setElapsed(0);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -159,7 +172,8 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
     setMode('saving');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     await recorder.stop();             // resolves after the last minute is uploaded
-    await stopSession();               // the server then rebuilds the notes once, over everything
+    await stopSession(liveSessionId.current);   // the server then rebuilds the notes once, over everything
+    liveSessionId.current = null;
   };
 
   const pauseRecording = () => {
@@ -200,6 +214,9 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
 
       <View style={st.center}>
         <Portrait c={c} size={120} />
+        {(recording || paused) && (
+          <Text style={[st.bigTimer, { color: paused ? c.review : c.ink }]}>{fmtHMS(elapsed)}</Text>
+        )}
         <View style={{ marginTop: S.x3 }}>
           <Waveform color={c.brassBright} accent={c.kumkum} bars={32} height={72} level={level} />
         </View>
@@ -253,6 +270,7 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
 
 const st = StyleSheet.create({
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.s },
+  bigTimer: { fontFamily: F.uiBold, fontSize: 48, letterSpacing: 2, marginTop: S.m, fontVariant: ['tabular-nums'] },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   stages: { width: '100%', maxWidth: 560, alignSelf: 'center', paddingHorizontal: S.l, paddingBottom: S.xl },
   preview: { maxHeight: 190, marginHorizontal: S.l, borderRadius: R.panel, backgroundColor: 'rgba(252,248,240,0.92)', borderWidth: 1, borderColor: palettes.manuscript.line },

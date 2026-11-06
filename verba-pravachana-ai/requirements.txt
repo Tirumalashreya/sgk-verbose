@@ -21,7 +21,7 @@ fsspec==2026.4.0
 google-ai-generativelanguage==0.6.15
 google-api-core==2.30.3
 google-api-python-client==2.196.0
-google-auth==2.52.0
+google-auth==2.61.0
 google-auth-httplib2==0.4.0
 google-genai==2.29.0  # >=2.x needed for the interactions API (Gemini 3.5 Transcribe)
 google-generativeai==0.8.6

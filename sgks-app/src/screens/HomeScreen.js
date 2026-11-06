@@ -32,6 +32,16 @@ export default function HomeScreen({ navigation }) {
   const [recentSessions, setRecentSessions] = useState([]);
   const waveAnim = useRef(new Animated.Value(0.4)).current;
 
+  const refreshRecentSessions = async () => {
+    try {
+      const data = await getSessions();
+      const all = (data.sessions || []).reverse();
+      setRecentSessions(all.slice(0, 3));
+    } catch {
+      setRecentSessions([]);
+    }
+  };
+
   useEffect(() => {
     const ws = createWebSocket((data) => {
       if (data.type === 'chunk_complete') {
@@ -39,15 +49,19 @@ export default function HomeScreen({ navigation }) {
         setIsLive(true);
         setRecentSessions(prev => [data, ...prev].slice(0, 3));
       }
+      if (data.type === 'session_complete') {
+        refreshRecentSessions();
+      }
     }, () => {});
 
-    getSessions().then(data => {
-      const all = (data.sessions || []).reverse();
-      setRecentSessions(all.slice(0, 3));
-    }).catch(() => {});
+    refreshRecentSessions();
+    const unsubscribe = navigation.addListener('focus', refreshRecentSessions);
 
-    return () => ws.close();
-  }, []);
+    return () => {
+      unsubscribe();
+      ws.close();
+    };
+  }, [navigation]);
 
   useEffect(() => {
     Animated.loop(
@@ -138,7 +152,7 @@ export default function HomeScreen({ navigation }) {
               </View>
             ) : recentSessions.map((session, i) => (
               <TouchableOpacity
-                key={i}
+                key={session.id || `recent-${i}`}
                 onPress={() => navigation.navigate('SessionDetail', { session })}
               >
                 <LinearGradient

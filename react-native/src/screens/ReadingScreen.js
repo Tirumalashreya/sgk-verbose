@@ -1,15 +1,60 @@
 // Reading — the complete verbatim notes, calm and legible. Follows the phone's
 // light/dark setting (Manuscript by day, Hall at night).
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
 import Sanscript from '@indic-transliteration/sanscript';
 import { useTheme, F, T, S, R } from '../theme';
+import Icon from '../ui/Icon';
 import { Screen, Enter, IconButton, Chip, Button, ReadingText, VerseBlock, sessionStatus, ExportDialog } from '../ui/kit';
-import { getSessions, getTimestampedNotes, updateNotes } from '../services/api';
+import { getSessions, getTimestampedNotes, updateNotes, updateSessionTitle } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
 import { notify } from '../services/platform';
 
 const isTe = (s) => /[ఀ-౿]/.test(s || '');
+
+const CASUAL_WORDS = {
+  namaskaram: 'నమస్కారం',
+  namaskaralu: 'నమస్కారాలు',
+  swami: 'స్వామి',
+  swamy: 'స్వామి',
+  acharya: 'ఆచార్య',
+  acharyulu: 'ఆచార్యులు',
+  pravachanam: 'ప్రవచనం',
+  shloka: 'శ్లోకం',
+  shlokam: 'శ్లోకం',
+  shlokalu: 'శ్లోకాలు',
+  ramanuja: 'రామానుజ',
+  krishna: 'కృష్ణ',
+  rama: 'రామ',
+  govinda: 'గోవింద',
+  venkateshwara: 'వేంకటేశ్వర',
+  venkateswara: 'వేంకటేశ్వర',
+  sri: 'శ్రీ',
+  shri: 'శ్రీ',
+  shree: 'శ్రీ',
+  guru: 'గురు',
+  guruvu: 'గురువు',
+  bhagavan: 'భగవాన్',
+  bhagavanthudu: 'భగవంతుడు',
+  devudu: 'దేవుడు',
+  telugu: 'తెలుగు',
+  namaste: 'నమస్తే',
+};
+
+function transliterateWord(w) {
+  if (!w || !/^[a-zA-Z]+$/.test(w)) return w;
+  const lower = w.toLowerCase();
+  if (CASUAL_WORDS[lower]) return CASUAL_WORDS[lower];
+  try {
+    const itrans = lower
+      .replace(/aa/g, 'A')
+      .replace(/ee/g, 'I')
+      .replace(/oo/g, 'U');
+    return Sanscript.t(itrans, 'itrans', 'telugu') || w;
+  } catch {
+    return w;
+  }
+}
 
 export default function ReadingScreen({ go, back, t, session: given }) {
   const c = useTheme();
@@ -22,14 +67,73 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [teluguAidOn, setTeluguAidOn] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
   const [romanInput, setRomanInput] = useState('');
   const [exportKind, setExportKind] = useState(null);   // 'pdf' | 'doc' | null (dialog closed)
+
   const teluguPreview = useMemo(() => {
     if (!romanInput.trim()) return '';
-    try { return Sanscript.t(romanInput, 'itrans', 'telugu'); } catch { return ''; }
+    return transliterateWord(romanInput.trim());
   }, [romanInput]);
+
+  const onDraftChange = (text) => {
+    if (!teluguAidOn) {
+      setDraft(text);
+      return;
+    }
+    const match = text.match(/([a-zA-Z]+)(\s)$/);
+    if (match) {
+      const converted = transliterateWord(match[1]);
+      const replaced = text.slice(0, -match[0].length) + converted + match[2];
+      setDraft(replaced);
+      return;
+    }
+    setDraft(text);
+  };
+
+  const toggleVoice = () => {
+    if (listening) {
+      recognitionRef.current?.stop?.();
+      setListening(false);
+      return;
+    }
+    const SpeechRecognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SpeechRecognition) {
+      notify(t('edit'), t('teluguVoiceUnsupported'));
+      return;
+    }
+    try {
+      const rec = new SpeechRecognition();
+      rec.lang = 'te-IN';
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.onstart = () => setListening(true);
+      rec.onresult = (event) => {
+        const spoken = event.results?.[0]?.[0]?.transcript;
+        if (spoken) {
+          const insert = spoken + ' ';
+          setDraft((prev) => {
+            const start = selection.start || prev.length;
+            const end = selection.end || prev.length;
+            const next = prev.slice(0, start) + insert + prev.slice(end);
+            setSelection({ start: start + insert.length, end: start + insert.length });
+            return next;
+          });
+        }
+      };
+      rec.onerror = () => setListening(false);
+      rec.onend = () => setListening(false);
+      recognitionRef.current = rec;
+      rec.start();
+    } catch {
+      setListening(false);
+    }
+  };
 
   useEffect(() => {
     if (given) { setSession(given); return; }
@@ -66,19 +170,38 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   };
   const selectTab = (id) => { setTab(id); if (id === 'timestamps') loadTimestamps(); };
 
-  const startEdit = () => { setDraft(session.notes || session.transcript || ''); setEditing(true); setTeluguAidOn(false); setRomanInput(''); };
+  const startEdit = () => {
+    setDraft(session.notes || session.transcript || '');
+    setTitleDraft(session.title || '');
+    setEditing(true);
+    setTeluguAidOn(false);
+    setRomanInput('');
+  };
   const cancelEdit = () => { setEditing(false); setTeluguAidOn(false); setRomanInput(''); };
   const saveEdit = async () => {
     setSaving(true);
     try {
-      await updateNotes(session.id, draft);
-      setSession((s) => ({ ...s, notes: draft, enhanced_notes: draft, edited: true }));
+      const cleanTitle = titleDraft.trim() || session.title;
+      await updateNotes(session.id, draft, cleanTitle);
+      setSession((s) => ({ ...s, title: cleanTitle, notes: draft, enhanced_notes: draft, edited: true }));
       setTsStatus('idle'); setTsNotes(null);   // the cached timestamped version no longer matches
       setEditing(false); setTeluguAidOn(false); setRomanInput('');
     } catch (e) {
       notify(t('edit'), String(e.message) || t('editFailed'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveTitle = async () => {
+    const cleanTitle = titleDraft.trim();
+    if (!cleanTitle) return;
+    try {
+      await updateSessionTitle(session.id, cleanTitle);
+      setSession((s) => ({ ...s, title: cleanTitle, edited: true }));
+      setRenaming(false);
+    } catch (e) {
+      notify(t('editTitle'), String(e.message || e));
     }
   };
   // Inserts the live Telugu preview at wherever the cursor last was in the
@@ -113,7 +236,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
     try { await (kind === 'pdf' ? downloadPDF(toExport, fileName) : downloadDOC(toExport, fileName)); }
     catch (e) { notify(kind.toUpperCase(), String(e.message || e)); }
   };
-  const tabs = [['notes', t('notes')], ['roman', t('roman')], ['verses', `${t('versesTab')} · ${shlokas.length}`],
+  const tabs = [['notes', t('notes')], ['verses', `${t('versesTab')} · ${shlokas.length}`],
     ['timestamps', t('timestampsTab')]];
 
   return (
@@ -138,7 +261,85 @@ export default function ReadingScreen({ go, back, t, session: given }) {
       </View>
 
       <Enter>
-        <Text selectable style={[isTe(session.title) ? T.displayTe : T.display, { color: c.ink, marginTop: S.s }]}>{session.title || 'Pravachanam'}</Text>
+        {renaming ? (
+          <View style={{ marginTop: S.s, marginBottom: S.s }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.s }}>
+              <TextInput
+                value={titleDraft}
+                onChangeText={setTitleDraft}
+                autoFocus
+                placeholder={t('titlePlaceholder')}
+                placeholderTextColor={c.muted}
+                style={[
+                  isTe(titleDraft) ? T.displayTe : T.display,
+                  {
+                    flex: 1,
+                    color: c.ink,
+                    borderBottomWidth: 1.5,
+                    borderColor: c.brass,
+                    paddingVertical: 4,
+                  },
+                ]}
+              />
+              <Pressable
+                onPress={saveTitle}
+                hitSlop={8}
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: R.control,
+                  backgroundColor: c.brass,
+                }}
+              >
+                <Text style={[T.label, { color: '#fff', fontSize: 13 }]}>{t('editSave')}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setRenaming(false)}
+                hitSlop={8}
+                style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 6,
+                }}
+              >
+                <Icon name="close" size={18} color={c.muted} />
+              </Pressable>
+            </View>
+          </View>
+        ) : editing ? (
+          <View style={{ marginTop: S.s, marginBottom: S.m }}>
+            <Text style={[T.caption, { color: c.muted, marginBottom: 4 }]}>{t('editTitle')}</Text>
+            <TextInput
+              value={titleDraft}
+              onChangeText={setTitleDraft}
+              placeholder={t('titlePlaceholder')}
+              placeholderTextColor={c.muted}
+              style={[
+                isTe(titleDraft) ? T.displayTe : T.display,
+                {
+                  color: c.ink,
+                  borderBottomWidth: 1.5,
+                  borderColor: c.brass,
+                  paddingVertical: 4,
+                },
+              ]}
+            />
+          </View>
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: S.s, gap: S.s, flexWrap: 'wrap' }}>
+            <Text selectable style={[isTe(session.title) ? T.displayTe : T.display, { color: c.ink, flexShrink: 1 }]}>
+              {session.title || 'Pravachanam'}
+            </Text>
+            <Pressable
+              onPress={() => { setTitleDraft(session.title || ''); setRenaming(true); }}
+              accessibilityRole="button"
+              accessibilityLabel={t('editTitle')}
+              hitSlop={8}
+              style={{ padding: 4 }}
+            >
+              <Icon name="edit" size={18} color={c.brass} />
+            </Pressable>
+          </View>
+        )}
         <View style={st.meta}>
           <Text style={[T.body, { color: c.muted, fontSize: 13.5 }]}>{date}{shlokas.length ? ` · ${shlokas.length} ${t('verses')}` : ''}</Text>
           {!review && <Chip c={c} tone="ok" icon="check">{t('ready')}</Chip>}
@@ -179,7 +380,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
           <View style={{ gap: S.m }}>
             <TextInput
               value={draft}
-              onChangeText={setDraft}
+              onChangeText={onDraftChange}
               onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
               selection={selection}
               multiline
@@ -187,17 +388,24 @@ export default function ReadingScreen({ go, back, t, session: given }) {
               autoCorrect={false}
               autoCapitalize="none"
               spellCheck={false}
-              // lang hints the OS toward a Telugu input/spell-check where it can act on it —
-              // it cannot make a Telugu keyboard appear on a device that doesn't have one
-              // installed; that switch is the phone's own keyboard picker, outside any app's reach.
               lang="te"
               accessibilityLabel={t('notes')}
               style={[T.read, st.editInput, { color: c.ink, borderColor: c.brass, backgroundColor: c.surface }]}
             />
-            <Pressable onPress={() => setTeluguAidOn((v) => !v)} accessibilityRole="button" accessibilityState={{ selected: teluguAidOn }}
-              style={[st.aidToggle, { borderColor: c.brass, backgroundColor: teluguAidOn ? c.brass : 'transparent' }]}>
-              <Text style={[T.label, { color: teluguAidOn ? c.onBrass : c.brass }]}>{t('teluguAid')}</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', gap: S.s }}>
+              <Pressable onPress={() => setTeluguAidOn((v) => !v)} accessibilityRole="button" accessibilityState={{ selected: teluguAidOn }}
+                style={[st.aidToggle, { borderColor: c.brass, backgroundColor: teluguAidOn ? c.brass : 'transparent', flex: 1, paddingVertical: 10 }]}>
+                <Text style={[T.label, { color: teluguAidOn ? c.onBrass : c.brass, textAlign: 'center' }]}>
+                  {teluguAidOn ? '✓ ' + t('teluguAid') : t('teluguAid')}
+                </Text>
+              </Pressable>
+              <Pressable onPress={toggleVoice} accessibilityRole="button"
+                style={[st.aidToggle, { borderColor: listening ? c.kumkum : c.brass, backgroundColor: listening ? c.kumkum : 'transparent', flex: 1, paddingVertical: 10 }]}>
+                <Text style={[T.label, { color: listening ? '#fff' : c.brass, textAlign: 'center' }]}>
+                  {listening ? '🔴 ' + t('teluguVoiceListening') : '🎙️ ' + t('teluguVoice')}
+                </Text>
+              </Pressable>
+            </View>
             {teluguAidOn && (
               <View style={[st.aidPanel, { borderColor: c.line, backgroundColor: c.surface }]}>
                 <Text style={[T.body, { color: c.muted, fontSize: 12.5, marginBottom: S.xs }]}>{t('teluguAidHint')}</Text>
@@ -234,7 +442,6 @@ export default function ReadingScreen({ go, back, t, session: given }) {
             <ReadingText c={c} notes={session.notes || session.transcript} shlokas={shlokas} typeLabel={t('verseType')} headings={session.notes_headings || {}} />
           </View>
         )}
-        {tab === 'roman' && <ReadingText c={c} notes={session.transliterated_notes || ''} shlokas={shlokas} roman typeLabel={t('verseType')} headings={session.notes_headings || {}} />}
         {tab === 'verses' && (shlokas.length === 0
           ? <Text style={[T.body, { color: c.muted }]}>{t('noVerses')}</Text>
           : <View style={{ gap: S.m }}>{shlokas.map((s, i) => (

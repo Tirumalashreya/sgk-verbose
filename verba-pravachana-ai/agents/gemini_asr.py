@@ -51,30 +51,31 @@ def _get_client_locked():
     return _client
 
 
-_vertex_client = None
+_vertex_clients = {}
 _vertex_client_lock = __import__("threading").Lock()
 
 
-def _get_vertex_client():
-    """Fallback only — same model, billed through Google Cloud instead of the
-    AI Studio API key's prepaid credits. Only reached if the primary client's
-    own retries (above) are all exhausted, same slot _sarvam_fallback used to
-    sit in."""
-    global _vertex_client
+def _get_vertex_client(project_env: str = "GOOGLE_CLOUD_PROJECT"):
+    """Billed through Google Cloud instead of the AI Studio API key's prepaid
+    credits. `project_env` picks which Vertex project/billing account — two
+    independent ones (GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_PROJECT_2) take turns
+    as primary in "llm" mode, so one billing account's problem doesn't stall
+    every piece."""
+    global _vertex_clients
     with _vertex_client_lock:
-        if _vertex_client is None:
+        if project_env not in _vertex_clients:
             from google import genai
-            project = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+            project = os.getenv(project_env, "")
             if not project:
-                raise RuntimeError("GOOGLE_CLOUD_PROJECT is not set")
+                raise RuntimeError(f"{project_env} is not set")
             # "global" — gemini-3.8-flash (LLM_MODEL) 404s on regional
             # endpoints like us-central1, confirmed by testing directly; it's
             # only served on the global one.
-            _vertex_client = genai.Client(
+            _vertex_clients[project_env] = genai.Client(
                 vertexai=True, project=project, location="global",
                 http_options={"timeout": 180_000},
             )
-        return _vertex_client
+        return _vertex_clients[project_env]
 
 
 def _vocabulary() -> list[str]:
@@ -265,11 +266,12 @@ def _process_one_piece(i: int, piece: str, total: int, mode: str, piece_seconds:
     """One piece, independently — returns (index, text, phrases, was_a_gap) so the
     caller can reassemble results in order after running these concurrently.
 
-    For "llm" mode, pieces alternate which account does the work (AI Studio
-    key vs Vertex AI/Google Cloud billing) — two separate rate-limit pools,
-    so running several pieces at once no longer piles every request onto one
-    pool's per-minute limit. Whichever one wasn't tried first still backs up
-    the other if it fails.
+    For "llm" mode, pieces alternate between two independent Vertex AI
+    projects (separate billing accounts, separate rate-limit pools) when a
+    second one is configured (GOOGLE_CLOUD_PROJECT_2) — so one project's
+    billing problem or rate limit doesn't stall every piece. The other
+    Vertex project backs up whichever one fails first; AI Studio's key is
+    only a last resort behind both, since it sits on a free/limited tier.
 
     All pieces get submitted to the thread pool up front — with max_workers
     capping how many actually run at once, most of them sit queued, not yet
@@ -281,34 +283,51 @@ def _process_one_piece(i: int, piece: str, total: int, mode: str, piece_seconds:
     if cancellation.is_cancelled(digest):
         return i, "", [], False
     offset = i * piece_seconds
-    vertex_available = bool(os.getenv("GOOGLE_CLOUD_PROJECT"))
-    use_vertex_first = mode == "llm" and vertex_available and i % 2 == 1
-    try:
-        if mode == "llm":
-            client = _get_vertex_client() if use_vertex_first else _get_client()
-            text, phrases = _llm_piece(piece, client=client, use_cache=use_cache), []
-        else:
+
+    if mode != "llm":
+        try:
             text, phrases = _transcribe_piece(piece, mode, offset, use_cache=use_cache)
+            if not text.strip():
+                raise RuntimeError("empty transcription returned")
+            print(f"  [gemini piece {i + 1}/{total}] {len(text)} chars (AI Studio)")
+            return i, text, phrases, False
+        except Exception as e:
+            print(f"  [gemini piece {i + 1}/{total}] FAILED after retries: {str(e)[:120]}")
+            fallback = _vertex_fallback(piece) or _sarvam_fallback(piece)
+            if fallback:
+                print(f"  [gemini piece {i + 1}/{total}] covered by fallback ({len(fallback)} chars)")
+                return i, fallback, [], False
+            return i, GAP_MARKER, [], True
+
+    project_2_available = bool(os.getenv("GOOGLE_CLOUD_PROJECT_2"))
+    primary_env = "GOOGLE_CLOUD_PROJECT_2" if (project_2_available and i % 2 == 1) else "GOOGLE_CLOUD_PROJECT"
+    other_env = "GOOGLE_CLOUD_PROJECT" if primary_env == "GOOGLE_CLOUD_PROJECT_2" else "GOOGLE_CLOUD_PROJECT_2"
+    try:
+        client = _get_vertex_client(primary_env)
+        text, phrases = _llm_piece(piece, client=client, use_cache=use_cache), []
         if not text.strip():
             raise RuntimeError("empty transcription returned")
-        label = "Vertex AI" if use_vertex_first else "AI Studio"
-        print(f"  [gemini piece {i + 1}/{total}] {len(text)} chars ({label})")
+        print(f"  [gemini piece {i + 1}/{total}] {len(text)} chars (Vertex: {os.getenv(primary_env)})")
         return i, text, phrases, False
     except Exception as e:
         print(f"  [gemini piece {i + 1}/{total}] FAILED after retries: {str(e)[:120]}")
-        # Whichever pool handled this piece just exhausted its own retries —
-        # try the other one before giving up, so one pool's limit or billing
-        # issue doesn't leave a hole in the transcript.
-        if use_vertex_first:
-            source = "AI Studio"
+        # Whichever Vertex project handled this piece just exhausted its own
+        # retries — try the other Vertex project next, then AI Studio as a
+        # last resort, so one project's limit or billing issue doesn't leave
+        # a hole in the transcript.
+        fallback, source = "", ""
+        if os.getenv(other_env):
+            try:
+                fallback = _llm_piece(piece, client=_get_vertex_client(other_env), use_cache=use_cache)
+                source = f"Vertex: {os.getenv(other_env)}"
+            except Exception as e2:
+                print(f"[gemini_asr] other Vertex project failed too: {str(e2)[:150]}")
+        if not fallback and os.getenv("GEMINI_API_KEY"):
             try:
                 fallback = _llm_piece(piece, client=_get_client(), use_cache=use_cache)
-            except Exception as e2:
-                print(f"[gemini_asr] AI Studio fallback failed too: {str(e2)[:150]}")
-                fallback = ""
-        else:
-            source = "Vertex AI"
-            fallback = _vertex_fallback(piece)
+                source = "AI Studio"
+            except Exception as e3:
+                print(f"[gemini_asr] AI Studio fallback failed too: {str(e3)[:150]}")
         if not fallback:
             fallback = _sarvam_fallback(piece)
             source = "Sarvam"

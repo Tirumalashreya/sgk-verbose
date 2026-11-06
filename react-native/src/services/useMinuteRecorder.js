@@ -80,6 +80,7 @@ function useNativeMinuteRecorder(onPiece) {
     setPaused(false);
     clearTimeout(timer.current);
     await cutPiece(true);
+    await chain.current;
   };
 
   // metering is dBFS (about -160 silence … 0 loudest); 0–1 is easier to animate
@@ -257,6 +258,7 @@ function useWebMinuteRecorder(onPiece) {
     setPaused(false);
     clearTimeout(timer.current);
     await cutPiece(true);
+    await chain.current;
     teardown();
   };
 

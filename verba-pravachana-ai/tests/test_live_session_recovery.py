@@ -20,7 +20,7 @@ def _in_progress(id_, transcript, minutes_ago, pieces_done=2):
 def _setup(monkeypatch, sessions):
     monkeypatch.setattr(api, "sessions_store", list(sessions))
     monkeypatch.setattr(api, "_live_by_id", {})
-    monkeypatch.setattr(api, "_live_recording_session", None)
+    monkeypatch.setattr(api, "_live_recording_sessions", {})
     monkeypatch.setattr(api, "_broadcast", lambda message: None)
     monkeypatch.setattr(api, "_forget_memory", lambda sources: None)
 
@@ -28,18 +28,19 @@ def _setup(monkeypatch, sessions):
 def test_no_in_progress_session_is_a_no_op(monkeypatch):
     _setup(monkeypatch, [{"id": "x", "live": True}])  # finalized session, no marker
     api._recover_live_sessions()
-    assert api._live_recording_session is None
+    assert api._live_recording_sessions == {}
     assert api._live_by_id == {}
 
 
 def test_recent_in_progress_session_is_resumed(monkeypatch):
     _setup(monkeypatch, [_in_progress("a1", "first part", minutes_ago=3)])
     api._recover_live_sessions()
-    assert api._live_recording_session is not None
-    assert api._live_recording_session["id"] == "a1"
-    assert api._live_recording_session["prefix"]["transcript"] == "first part"
-    assert api._live_recording_session["prior_pieces"] == 2
-    assert api._live_by_id["a1"] is api._live_recording_session
+    resumed = api._live_recording_sessions.get(None)   # these fixtures have no created_by
+    assert resumed is not None
+    assert resumed["id"] == "a1"
+    assert resumed["prefix"]["transcript"] == "first part"
+    assert resumed["prior_pieces"] == 2
+    assert api._live_by_id["a1"] is resumed
 
 
 def test_stale_in_progress_session_is_finalized_instead_of_resumed(monkeypatch):
@@ -47,7 +48,7 @@ def test_stale_in_progress_session_is_finalized_instead_of_resumed(monkeypatch):
     calls = []
     monkeypatch.setattr(api, "_finalize_live_session", lambda session: calls.append(session["id"]))
     api._recover_live_sessions()
-    assert api._live_recording_session is None  # not resumed as the active session
+    assert api._live_recording_sessions == {}  # not resumed as anyone's active session
     for _ in range(20):
         if calls:
             break
@@ -56,11 +57,15 @@ def test_stale_in_progress_session_is_finalized_instead_of_resumed(monkeypatch):
 
 
 def test_only_the_most_recent_in_progress_session_resumes_others_are_closed(monkeypatch):
+    """Same user (these fixtures share created_by=None) — only their newest
+    in-progress recording resumes, the rest are closed out, same as before.
+    A *different* user's in-progress recording would resume independently —
+    see test_live_sessions.py for that case."""
     _setup(monkeypatch, [_in_progress("older", "a", minutes_ago=10), _in_progress("newer", "b", minutes_ago=1)])
     calls = []
     monkeypatch.setattr(api, "_finalize_live_session", lambda session: calls.append(session["id"]))
     api._recover_live_sessions()
-    assert api._live_recording_session["id"] == "newer"
+    assert api._live_recording_sessions[None]["id"] == "newer"
     for _ in range(20):
         if calls:
             break

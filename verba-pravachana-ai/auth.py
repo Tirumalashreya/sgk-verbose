@@ -56,6 +56,53 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(_security)) -
     return credentials.username
 
 
+def username_from_header(header: str | None) -> str | None:
+    """The username behind a Basic Auth header, once the password's been
+    verified against it — None for a missing/malformed header or a wrong
+    password. Used to attribute an action (a session, an error) to whoever
+    was actually logged in, not to gate anything itself."""
+    if not header or not header.startswith("Basic "):
+        return None
+    try:
+        decoded = base64.b64decode(header[len("Basic "):]).decode("utf-8")
+        username, _, password = decoded.partition(":")
+    except Exception:
+        return None
+    return username if _check(username, password) else None
+
+
+def check_basic_header(header: str | None) -> bool:
+    """Same check as verify_credentials, but against a raw Authorization
+    header string — used by the HTTP-only auth middleware (api.py), since
+    FastAPI's HTTPBasic security class isn't WebSocket-safe when wired up
+    as an app-level dependency (it crashes on a websocket scope), so plain
+    HTTP routes are now guarded by middleware instead."""
+    if not auth_enabled():
+        return True
+    return username_from_header(header) is not None
+
+
+def _admin_check(username: str, password: str) -> bool:
+    expected_user = os.getenv("ADMIN_USER", "")
+    expected_pw = os.getenv("ADMIN_PASSWORD", "")
+    if not expected_user or not expected_pw:
+        return False
+    return secrets.compare_digest(username, expected_user) and secrets.compare_digest(password, expected_pw)
+
+
+def check_admin_header(header: str | None) -> bool:
+    """Separate credentials from APP_USERS — the owner-only /admin page isn't
+    reachable with any of the 10 regular app logins, only ADMIN_USER/PASSWORD."""
+    if not header or not header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(header[len("Basic "):]).decode("utf-8")
+        username, _, password = decoded.partition(":")
+    except Exception:
+        return False
+    return _admin_check(username, password)
+
+
 def verify_ws_token(token: str | None) -> bool:
     """The WebSocket handshake can't carry a Basic Auth header the way a
     fetch() call can — a browser/RN WebSocket client has no API for custom

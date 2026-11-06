@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "SGKS Notes",
-    "slug": "shravanam-sgks",
+    "name": "SGK'S Notes",
+    "slug": "sgk-notes",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/acharya.png",
@@ -11,10 +11,10 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "org.sgks.shravanam"
+      "bundleIdentifier": "org.sgks.notes"
     },
     "android": {
-      "package": "org.sgks.shravanam",
+      "package": "org.sgks.notes",
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -46,11 +46,11 @@
         }
       ]
     ],
+    "owner": "tirumalashreya50",
     "extra": {
       "eas": {
-        "projectId": "7c9d2d80-6c04-482a-8a15-9dfa594d016f"
+        "projectId": "b7bda2f9-3163-488c-a204-b487098858ec"
       }
-    },
-    "owner": "tirumalashreya50"
+    }
   }
 }

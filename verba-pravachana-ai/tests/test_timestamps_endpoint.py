@@ -20,7 +20,7 @@ def test_404_for_an_unknown_session(monkeypatch):
 
 
 def test_404_when_no_audio_is_available(monkeypatch):
-    session = {"id": "s1", "notes": "ఏదో నోట్స్", "source_audio_path": None}
+    session = {"id": "s1", "created_by": "dev", "notes": "ఏదో నోట్స్", "source_audio_path": None}
     client = _client(monkeypatch, [session])
     monkeypatch.setattr(nt, "available", lambda s: False)
     res = client.get("/sessions/s1/timestamps")
@@ -28,7 +28,7 @@ def test_404_when_no_audio_is_available(monkeypatch):
 
 
 def test_returns_cached_notes_timestamped_without_rebuilding(monkeypatch):
-    session = {"id": "s1", "notes": "ఏదో", "notes_timestamped": "[00:00] ఏదో", "source_audio_path": None}
+    session = {"id": "s1", "created_by": "dev", "notes": "ఏదో", "notes_timestamped": "[00:00] ఏదో", "source_audio_path": None}
     client = _client(monkeypatch, [session])
     called = []
     monkeypatch.setattr(nt, "build", lambda s: called.append(1) or "SHOULD NOT BE USED")
@@ -39,7 +39,7 @@ def test_returns_cached_notes_timestamped_without_rebuilding(monkeypatch):
 
 
 def test_builds_and_caches_when_not_already_present(monkeypatch):
-    session = {"id": "s1", "notes": "ఏదో నోట్స్", "source_audio_path": None}
+    session = {"id": "s1", "created_by": "dev", "notes": "ఏదో నోట్స్", "source_audio_path": None}
     sessions = [session]
     client = _client(monkeypatch, sessions)
     monkeypatch.setattr(nt, "available", lambda s: True)
@@ -51,7 +51,7 @@ def test_builds_and_caches_when_not_already_present(monkeypatch):
 
 
 def test_force_true_rebuilds_even_when_cached(monkeypatch):
-    session = {"id": "s1", "notes": "ఏదో", "notes_timestamped": "[00:00] old", "source_audio_path": None}
+    session = {"id": "s1", "created_by": "dev", "notes": "ఏదో", "notes_timestamped": "[00:00] old", "source_audio_path": None}
     client = _client(monkeypatch, [session])
     monkeypatch.setattr(nt, "available", lambda s: True)
     monkeypatch.setattr(nt, "build", lambda s: "[00:09] new")
@@ -60,7 +60,7 @@ def test_force_true_rebuilds_even_when_cached(monkeypatch):
 
 
 def test_404_when_build_fails_to_align_anything(monkeypatch):
-    session = {"id": "s1", "notes": "ఏదో నోట్స్", "source_audio_path": None}
+    session = {"id": "s1", "created_by": "dev", "notes": "ఏదో నోట్స్", "source_audio_path": None}
     client = _client(monkeypatch, [session])
     monkeypatch.setattr(nt, "available", lambda s: True)
     monkeypatch.setattr(nt, "build", lambda s: None)
