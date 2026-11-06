@@ -8,13 +8,13 @@ from agents.correction_agent import _apply_bracket_commands, correction_agent
 
 def test_bracket_lo_opens_a_bracket():
     out, n = _apply_bracket_commands("ఇది బ్రాకెట్ లో ముఖ్యమైనది బ్రాకెట్ క్లోజ్ అని చెప్పారు")
-    assert out == "ఇది ( ముఖ్యమైనది ) అని చెప్పారు"
+    assert out == "ఇది (ముఖ్యమైనది) అని చెప్పారు"
     assert n == 2
 
 
 def test_bracket_open_also_opens_a_bracket():
     out, n = _apply_bracket_commands("బ్రాకెట్ ఓపెన్ ఇది ముఖ్యం బ్రాకెట్ క్లోజ్")
-    assert out == "( ఇది ముఖ్యం )"
+    assert out == "(ఇది ముఖ్యం)"
     assert n == 2
 
 
@@ -24,7 +24,7 @@ def test_content_between_the_cues_is_preserved_exactly():
     inner = "ఇది చాలా పొడవైన వాక్యం, సంఖ్యలు మరియు పేర్లు కూడా ఉన్నాయి రామానుజులు"
     out, n = _apply_bracket_commands(f"ఆయన బ్రాకెట్ లో {inner} బ్రాకెట్ క్లోజ్ అన్నారు")
     assert inner in out
-    assert out == f"ఆయన ( {inner} ) అన్నారు"
+    assert out == f"ఆయన ({inner}) అన్నారు"
 
 
 def test_text_without_any_bracket_cue_is_completely_unchanged():
@@ -33,10 +33,27 @@ def test_text_without_any_bracket_cue_is_completely_unchanged():
     assert out == text and n == 0
 
 
-def test_an_unclosed_open_just_leaves_a_stray_open_paren_no_guessing():
+def test_unclosed_bracket_auto_closes_at_sentence_end():
     out, n = _apply_bracket_commands("ఇది బ్రాకెట్ లో ముగింపు లేదు")
-    assert out == "ఇది ( ముగింపు లేదు"   # no invented closing — it just ends open
-    assert n == 1
+    assert out == "ఇది (ముగింపు లేదు)"
+    assert n >= 2
+
+
+def test_unclosed_bracket_auto_closes_before_ani_clause():
+    out, n = _apply_bracket_commands("ఈ విషయాన్ని బ్రాకెట్ లో గుర్తుంచుకోవాలి అని చెప్పారు. ఆ తరువాత")
+    assert out == "ఈ విషయాన్ని (గుర్తుంచుకోవాలి) అని చెప్పారు. ఆ తరువాత"
+    assert n >= 2
+
+
+def test_plural_and_descriptive_bracket_phrases():
+    out1, _ = _apply_bracket_commands("బ్రాకెట్లలో ముఖ్యమైన విషయం బ్రాకెట్ ఎండ్")
+    assert out1 == "(ముఖ్యమైన విషయం)"
+
+    out2, _ = _apply_bracket_commands("దీనిని బ్రాకెట్ లో ఉంచండి రహస్యం బ్రాకెట్ ముగింపు")
+    assert out2 == "దీనిని (రహస్యం)"
+
+    out3, _ = _apply_bracket_commands("స్టార్ట్ బ్రాకెట్ వేదం ఎండ్ బ్రాకెట్")
+    assert out3 == "(వేదం)"
 
 
 def test_the_word_bracket_alone_with_no_cue_word_after_it_is_left_alone():

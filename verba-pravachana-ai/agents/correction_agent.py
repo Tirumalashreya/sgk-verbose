@@ -58,44 +58,115 @@ def _apply_term_fixes(text: str) -> tuple[str, int]:
 # renders it differently, this simply won't match anything; add the real
 # spelling here once a recording that uses it has been seen.
 # Covers the open/close said in either word order, plus "stop" as another
-# common way to say "end this".
-_BRACKET_OPEN = re.compile(_W + r'(?:బ్రాకెట్\s*(?:లో|ఓపెన్)|ఓపెన్\s*బ్రాకెట్)' + _E)
-_BRACKET_CLOSE = re.compile(_W + r'(?:బ్రాకెట్\s*(?:క్లోజ్|స్టాప్)|క్లోజ్\s*బ్రాకెట్)' + _E)
+# common way to say "end this", and plural/extended phrases like "బ్రాకెట్లలో",
+# "బ్రాకెట్ లో ఉంచండి", "స్టార్ట్/ఎండ్ బ్రాకెట్".
+_BRACKET_OPEN = re.compile(
+    _W + r'(?:'
+         r'బ్రాకెట్(?:లలో|\s*లో)(?:\s*(?:ఉంచండి|పెట్టండి|రాయండి))?'
+         r'|బ్రాకెట్\s*(?:ఓపెన్|స్టార్ట్)'
+         r'|(?:ఓపెన్|స్టార్ట్)\s*(?:ది\s*)?బ్రాకెట్'
+         r')' + _E,
+    re.IGNORECASE
+)
+_BRACKET_CLOSE = re.compile(
+    _W + r'(?:'
+         r'బ్రాకెట్\s*(?:క్లోజ్|స్టాప్|ఎండ్|ముగింపు)'
+         r'|(?:క్లోజ్|స్టాప్|ఎండ్)\s*(?:ది\s*)?బ్రాకెట్'
+         r')' + _E,
+    re.IGNORECASE
+)
+
+
+def _snap_punctuation_spacing(text: str) -> str:
+    """Snaps inner whitespace around brackets and quotes for book-quality typography."""
+    text = re.sub(r'\(\s+', '(', text)
+    text = re.sub(r'\s+\)', ')', text)
+    text = re.sub(r'“\s+', '“', text)
+    text = re.sub(r'\s+”', '”', text)
+    text = re.sub(r'"\s+([^"\n]+?)\s+"', r'"\1"', text)
+    text = re.sub(r'([^\s(\[{“"])(\(|“)', r'\1 \2', text)
+    text = re.sub(r'(\)|”)([^\s)\]}”",.:;!?।॥])', r'\1 \2', text)
+    # Remove any space between close bracket/quote and following punctuation
+    text = re.sub(r'([”\)])\s+([.,!?:;।॥])', r'\1\2', text)
+    return text.strip()
+
+
+def _auto_close_unmatched(text: str, open_ch: str, close_ch: str) -> tuple[str, int]:
+    """Auto-seals unclosed brackets or quotes before 'అని' clauses or sentence boundaries."""
+    diff = text.count(open_ch) - text.count(close_ch)
+    if diff <= 0:
+        return text, 0
+    added = 0
+    for _ in range(diff):
+        stack = []
+        for i, ch in enumerate(text):
+            if ch == open_ch:
+                stack.append(i)
+            elif ch == close_ch:
+                if stack:
+                    stack.pop()
+        if not stack:
+            break
+        target_open = stack[-1]
+        sub = text[target_open + 1:]
+        ani_match = re.search(r'\s+(?:అని\s*(?:చెప్పారు|అన్నారు|వివరించారు|తెలిపారు|పలికారు|భాష్యం|వ్రాశారు|పేర్కొన్నారు)|అని(?=[\s.,!?।॥]|$))', sub)
+        sent_match = re.search(r'[.!?।॥]|\n|$', sub)
+
+        if ani_match and (not sent_match or ani_match.start() < sent_match.start()):
+            insert_pos = target_open + 1 + ani_match.start()
+        elif sent_match and sent_match.start() > 0:
+            insert_pos = target_open + 1 + sent_match.start()
+        else:
+            insert_pos = len(text)
+
+        next_text = text[insert_pos:]
+        sep = '' if re.match(r'^[.,!?:;।॥\s]', next_text) else ' '
+        text = text[:insert_pos].rstrip() + close_ch + sep + next_text.lstrip()
+        added += 1
+
+    return text.strip(), added
 
 
 def _apply_bracket_commands(text: str) -> tuple[str, int]:
-    text, n_open = _BRACKET_OPEN.subn('(', text)
     text, n_close = _BRACKET_CLOSE.subn(')', text)
-    return text, n_open + n_close
+    text, n_open = _BRACKET_OPEN.subn('(', text)
+    text, n_auto = _auto_close_unmatched(text, '(', ')')
+    if n_open or n_close or n_auto:
+        text = _snap_punctuation_spacing(text)
+    return text, n_open + n_close + n_auto
 
 
-# Same convention as the bracket command, for "put this in quotes" — a real
-# recording used exactly "ఇన్వర్టెడ్ కామాస్ ... అని ఇన్వర్టెడ్ కామాస్ ముగింపు"
-# (bare "inverted commas" to open, "... ముగింపు" — "ending" — to close, not
-# "క్లోజ్"). Covers the other ways this is commonly said too — "కామాస్" alone
-# (dropping "ఇన్వర్టెడ్"), "స్టాప్" as another way to say "end this", and
-# either word order. The close patterns are matched first since they're
-# strict extensions of the open phrase ("కామాస్" + a closing word) — matching
-# open first would swallow the shared prefix and leave the closing word
-# stranded as plain text. "కోట్" ("quote") is never matched bare — it's also
-# an ordinary Telugu word (fort), so only the unambiguous multi-word commands
-# are recognized.
-_COMMAS = r'(?:ఇన్వర్టెడ్\s*కామాస్|కామాస్)'
+# Same convention as the bracket command, for "put this in quotes" — covers
+# "ఇన్వర్టెడ్ కామాస్", "కామాస్", "కొటేషన్స్", "కొటేషన్", "డబుల్ కోట్స్", and
+# english loanword forms like "కోట్ ఓపెన్" / "అన్ కోట్". Emits book-quality
+# curly quotes (“...”) and snaps whitespace.
+_COMMAS = r'(?:ఇన్వర్టెడ్\s*కామాస్|కామాస్|కొటేషన్స్|కొటేషన్|డబుల్\s*కోట్స్)'
 _QUOTE_CLOSE = re.compile(
-    _W + rf'(?:{_COMMAS}\s*(?:ముగింపు|క్లోజ్|ఎండ్|స్టాప్)'
+    _W + rf'(?:'
+         rf'{_COMMAS}\s*(?:ముగింపు|క్లోజ్|ఎండ్|స్టాప్)'
+         r'|(?:క్లోజ్|స్టాప్|ఎండ్)\s*(?:ది\s*)?(?:కోట్|కొటేషన్స్|కొటేషన్|కామాస్)'
+         r'|కోట్\s*(?:క్లోజ్|స్టాప్|ఎండ్|ముగింపు)'
          r'|అన్\s*కోట్'
-         r'|కోట్\s*(?:క్లోజ్|స్టాప్)|క్లోజ్\s*కోట్)' + _E
+         r')' + _E,
+    re.IGNORECASE
 )
 _QUOTE_OPEN = re.compile(
-    _W + rf'(?:{_COMMAS}(?:\s*(?:లో|ఓపెన్))?'
-         r'|కోట్\s*ఓపెన్|ఓపెన్\s*కోట్)' + _E
+    _W + rf'(?:'
+         rf'{_COMMAS}(?:\s*(?:లో(?:\s*(?:ఉంచండి|పెట్టండి|రాయండి))?|ఓపెన్|స్టార్ట్))?'
+         r'|(?:ఓపెన్|స్టార్ట్)\s*(?:ది\s*)?(?:కోట్|కొటేషన్స్|కొటేషన్)'
+         r'|కోట్\s*(?:ఓపెన్|స్టార్ట్)'
+         r')' + _E,
+    re.IGNORECASE
 )
 
 
 def _apply_quote_commands(text: str) -> tuple[str, int]:
-    text, n_close = _QUOTE_CLOSE.subn('"', text)
-    text, n_open = _QUOTE_OPEN.subn('"', text)
-    return text, n_open + n_close
+    text, n_close = _QUOTE_CLOSE.subn('”', text)
+    text, n_open = _QUOTE_OPEN.subn('“', text)
+    text, n_auto = _auto_close_unmatched(text, '“', '”')
+    if n_open or n_close or n_auto:
+        text = _snap_punctuation_spacing(text)
+    return text, n_open + n_close + n_auto
 
 
 # The dictionary above only catches Tamil names already known to be
