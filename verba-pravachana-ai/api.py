@@ -566,6 +566,42 @@ async def get_timestamps(session_id: str, request: Request, force: bool = False)
     return {"notes_timestamped": out}
 
 
+@app.get("/sessions/{session_id}/audio")
+async def get_session_audio(session_id: str, request: Request):
+    """Download the complete continuous audio recording for this session.
+    Strictly isolated per-user: only the owner who recorded/uploaded the
+    session can download its audio."""
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+    username = request.state.username
+    session = next((s for s in sessions_store if s.get("id") == session_id and s.get("created_by") == username), None)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    from agents import notes_timestamp as nt
+    audio_path = nt._find_audio(session)
+    if not audio_path or not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="Audio file not available on server")
+
+    raw_title = session.get("title") or "pravachanam"
+    clean_title = re.sub(r'[^\w\s-]', '', raw_title).strip() or "recording"
+    clean_title = re.sub(r'[-\s]+', '_', clean_title)
+    ext = os.path.splitext(audio_path)[1] or ".webm"
+    media_type = (
+        "audio/webm" if ext == ".webm" else
+        "audio/mpeg" if ext == ".mp3" else
+        "audio/mp4" if ext in (".m4a", ".mp4") else
+        "audio/wav" if ext == ".wav" else
+        "application/octet-stream"
+    )
+
+    return FileResponse(
+        path=audio_path,
+        media_type=media_type,
+        filename=f"{clean_title}{ext}",
+    )
+
+
 class UpdateNotesRequest(BaseModel):
     notes: str | None = None
     title: str | None = None
@@ -992,6 +1028,10 @@ def _finalize_live_session(session: dict):
                                      created_by=session.get("created_by"))
         final["id"], final["created_at"] = session["id"], session["created_at"]
         final["created_by"] = session.get("created_by")
+
+        # Pre-stitch live audio pieces in background so master audio file is ready immediately
+        from agents import notes_timestamp as nt
+        threading.Thread(target=nt._concat_live_pieces, args=(session["id"],), daemon=True).start()
         for i, s in enumerate(sessions_store):
             if s.get("id") == session["id"]:
                 sessions_store[i] = final

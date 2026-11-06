@@ -6,7 +6,7 @@ import Sanscript from '@indic-transliteration/sanscript';
 import { useTheme, F, T, S, R } from '../theme';
 import Icon from '../ui/Icon';
 import { Screen, Enter, IconButton, Chip, Button, ReadingText, VerseBlock, sessionStatus, ExportDialog } from '../ui/kit';
-import { getSessions, getTimestampedNotes, updateNotes, updateSessionTitle } from '../services/api';
+import { getSessions, getTimestampedNotes, updateNotes, updateSessionTitle, downloadSessionAudio } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
 import { notify } from '../services/platform';
 
@@ -218,6 +218,21 @@ export default function ReadingScreen({ go, back, t, session: given }) {
     setRomanInput('');
   };
 
+  const [audioLoading, setAudioLoading] = useState(false);
+
+  const handleAudioDownload = async () => {
+    if (audioLoading) return;
+    setAudioLoading(true);
+    notify(t('downloadAudio'), t('audioDownloading'));
+    try {
+      await downloadSessionAudio(session.id, session.title);
+    } catch (e) {
+      notify(t('downloadAudio'), t('audioError'));
+    } finally {
+      setAudioLoading(false);
+    }
+  };
+
   const exportAs = (kind) => setExportKind(kind);   // opens the dialog; the actual download happens on Generate
 
   const handleExportGenerate = async ({ fileName, withTimestamps }) => {
@@ -255,6 +270,9 @@ export default function ReadingScreen({ go, back, t, session: given }) {
             </Pressable>
             <Pressable onPress={() => exportAs('doc')} accessibilityRole="button" accessibilityLabel={`${t('exportDoc')} export`} style={st.export}>
               <Text style={[T.label, { color: c.brass }]}>{t('exportDoc')}</Text>
+            </Pressable>
+            <Pressable onPress={handleAudioDownload} accessibilityRole="button" accessibilityLabel="Download Audio" style={st.export} disabled={audioLoading}>
+              <Text style={[T.label, { color: c.brass }]}>{audioLoading ? '…' : t('downloadAudio')}</Text>
             </Pressable>
           </>}
         </View>

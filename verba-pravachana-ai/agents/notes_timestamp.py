@@ -34,50 +34,72 @@ SHLOKA_MARK = re.compile(r'\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?')
 
 def _live_piece_paths(session_id: str) -> list[str]:
     """A live recording's saved per-minute audio, in recording order."""
-    pattern = os.path.join("audio_input", f"live_{session_id[:8]}_*")
-    files = [f for f in glob.glob(pattern) if not f.endswith(".json")]
+    short_id = session_id[:8]
+    pattern = os.path.join("audio_input", f"live_{short_id}_*")
+    files = glob.glob(pattern)
 
     def idx(f):
-        return int(os.path.splitext(os.path.basename(f))[0].rsplit("_", 1)[1])
+        base = os.path.splitext(os.path.basename(f))[0]
+        try:
+            return int(base.rsplit("_", 1)[1])
+        except (ValueError, IndexError):
+            return 999999
 
-    return [f for f, _ in sorted(((f, idx(f)) for f in files), key=lambda t: t[1])]
+    valid_files = [
+        f for f in files
+        if re.search(r"live_" + re.escape(short_id) + r"_(\d+)\.\w+$", f)
+    ]
+    return [f for f, _ in sorted(((f, idx(f)) for f in valid_files), key=lambda t: t[1])]
 
 
 def _concat_live_pieces(session_id: str) -> str | None:
     """One audio file spanning the whole recording, so gemini_asr's own
-    chunking and offset accounting (gemini_stt already splits long audio and
-    accumulates each piece's real position) only has to run once, over the
-    whole thing, instead of being reimplemented here per piece."""
+    chunking and offset accounting only has to run once, over the whole thing,
+    instead of being reimplemented here per piece."""
     paths = _live_piece_paths(session_id)
     if not paths:
         return None
+    if len(paths) == 1 and os.path.exists(paths[0]) and os.path.getsize(paths[0]) > 0:
+        return paths[0]
+
     out_dir = os.path.join("audio_input", ".work")
     os.makedirs(out_dir, exist_ok=True)
-    # .webm, not .m4a: each piece is Opus-in-WebM, and stream-copying Opus
-    # straight into an MP4/.m4a container isn't something ffmpeg's muxer
-    # supports (confirmed: "Could not find tag for codec opus in container"
-    # — it fails but still leaves a 0-byte file behind, which then looked
-    # like a valid cached result forever after and crashed every later
-    # request that tried to read it). Concatenating into the pieces' own
-    # native container works, and costs nothing extra since it's still a
-    # stream copy, not a re-encode.
     out_path = os.path.join(out_dir, f"concat_{session_id[:8]}.webm")
     if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         return out_path
     list_file = out_path + ".txt"
-    with open(list_file, "w", encoding="utf-8") as f:
-        for p in paths:
-            f.write(f"file '{os.path.abspath(p)}'\n")
     try:
+        with open(list_file, "w", encoding="utf-8") as f:
+            for p in paths:
+                f.write(f"file '{os.path.abspath(p)}'\n")
         subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
         )
     except Exception as e:
-        print(f"[notes_timestamp] could not concatenate live pieces: {e}")
+        print(f"[notes_timestamp] ffmpeg stream-copy concat failed ({e}) — retrying with aac encode")
         if os.path.exists(out_path):
-            os.remove(out_path)   # a failed ffmpeg run can still leave a 0-byte file — don't cache that as success
-        return None
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+        try:
+            out_path_m4a = os.path.join(out_dir, f"concat_{session_id[:8]}.m4a")
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c:a", "aac", "-b:a", "128k", out_path_m4a],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+            )
+            if os.path.exists(out_path_m4a) and os.path.getsize(out_path_m4a) > 0:
+                return out_path_m4a
+        except Exception as e2:
+            print(f"[notes_timestamp] ffmpeg fallback failed: {e2}")
+            return None
+    finally:
+        if os.path.exists(list_file):
+            try:
+                os.remove(list_file)
+            except OSError:
+                pass
     if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         return None
     return out_path

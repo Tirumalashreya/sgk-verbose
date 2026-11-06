@@ -188,6 +188,40 @@ export const getTimestampedNotes = async (sessionId) => {
   return (await res.json()).notes_timestamped;
 };
 
+export const downloadSessionAudio = async (sessionId, customTitle) => {
+  const token = await authToken();
+  const url = `${API_BASE}/sessions/${sessionId}/audio`;
+  const cleanTitle = (customTitle || 'pravachanam').replace(/[^a-z0-9\u0C00-\u0C7F ]/gi, '_').trim() || 'recording';
+  const fileName = `${cleanTitle}.webm`;
+
+  if (isWeb) {
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Basic ${token}` } : {},
+    });
+    if (!res.ok) throw new Error('Audio not available');
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+    return;
+  }
+
+  const FileSystemLegacy = await import('expo-file-system/legacy');
+  const Sharing = await import('expo-sharing');
+  const destUri = `${FileSystemLegacy.cacheDirectory}${fileName}`;
+  await FileSystemLegacy.downloadAsync(url, destUri, {
+    headers: token ? { Authorization: `Basic ${token}` } : {},
+  });
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(destUri);
+  }
+};
+
 export const createWebSocket = async (onMessage, onOpen, onClose) => {
   const token = await authToken();
   const wsUrl = API_BASE.replace(/^http/, 'ws') + '/ws' + (token ? `?token=${token}` : '');
