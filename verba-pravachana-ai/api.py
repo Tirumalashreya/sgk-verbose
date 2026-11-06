@@ -33,7 +33,11 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
     browser-level auth popup in front of blank nothing would be worse than
     just letting the app shell load — the real data underneath is still
     behind this same check on every API route."""
-    _PUBLIC_PATHS = {"/", "/index.html", "/metadata.json", "/favicon.ico"}
+    _PUBLIC_PATHS = {
+        "/", "/index.html", "/metadata.json", "/favicon.ico",
+        "/manifest.json", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png",
+        "/favicon-32x32.png", "/favicon-16x16.png",
+    }
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -45,7 +49,10 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                 return Response(status_code=401, headers={"WWW-Authenticate": "Basic"})
             return await call_next(request)
         is_public_static = request.method == "GET" and (
-            path in self._PUBLIC_PATHS or path.startswith("/_expo/") or path.startswith("/assets/")
+            path in self._PUBLIC_PATHS
+            or path.startswith("/_expo/")
+            or path.startswith("/assets/")
+            or path.endswith((".png", ".ico", ".json", ".webmanifest", ".svg"))
         )
         if not is_public_static and not check_basic_header(request.headers.get("authorization")):
             return Response(status_code=401, headers={"WWW-Authenticate": "Basic"})

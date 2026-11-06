@@ -24,6 +24,11 @@
         "android.permission.FOREGROUND_SERVICE_MICROPHONE"
       ]
     },
+    "web": {
+      "favicon": "./assets/acharya.png",
+      "name": "SGK'S Notes",
+      "shortName": "SGK'S Notes"
+    },
     "plugins": [
       "expo-font",
       "expo-status-bar",
