@@ -23,9 +23,15 @@ def _shloka_spans(norm: str, shlokas: list) -> list[tuple[int, int, dict]]:
     """Every occurrence of every verse, longest-first so nested verses don't double-mark."""
     candidates = []
     for s in shlokas:
-        for start, end in find_all(norm, s.get("text") or ""):
-            start, end = expand_to_words(norm, start, end)
-            candidates.append((start, end, {**s, "text": norm[start:end]}))
+        occ = s.get("occurrences")
+        if occ:
+            for start, end in occ:
+                start, end = expand_to_words(norm, start, end)
+                candidates.append((start, end, {**s, "text": norm[start:end]}))
+        else:
+            for start, end in find_all(norm, s.get("text") or ""):
+                start, end = expand_to_words(norm, start, end)
+                candidates.append((start, end, {**s, "text": norm[start:end]}))
     candidates.sort(key=lambda c: (c[0], -(c[1] - c[0])))
     spans, last_end = [], -1
     for start, end, s in candidates:
@@ -235,6 +241,8 @@ INLINE_WORD_LIMIT = 2   # a verse this short (a name, a single phrase) reads bet
 
 
 def _is_inline_shloka(s: dict) -> bool:
+    if s.get("is_inline"):
+        return True
     return len((s.get("text") or "").split()) <= INLINE_WORD_LIMIT
 
 

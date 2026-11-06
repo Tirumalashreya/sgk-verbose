@@ -121,6 +121,14 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
         print(f"  {len(native)} verse(s) found written in real Tamil script (missed the LLM pass — "
               f"its prompt assumes Tamil is spelled phonetically in Telugu, which this wasn't)")
     shlokas = sorted(shlokas + native, key=lambda s: s["start_index"])
+
+    # Detect inline Sri Vaishnava Tamil & Sanskrit terms outside full verses
+    from agents.inline_terms import detect_inline_terms
+    inline = detect_inline_terms(norm_transcript, shlokas)
+    if inline:
+        print(f"  {len(inline)} inline term(s) tagged (Tamil/Sanskrit vocabulary outside recited verses)")
+        shlokas = sorted(shlokas + inline, key=lambda s: s["start_index"])
+
     print(f"[shloka_detect] done — {len(all_raw)} detected, {len(shlokas)} verified")
     return {"shlokas": shlokas}
 

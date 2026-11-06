@@ -595,7 +595,10 @@ async def update_notes(session_id: str, data: UpdateNotesRequest, request: Reque
     _save_sessions()
     _broadcast({"type": "chunk_complete", "chunk_index": session.get("chunk_index", 0),
                 "title": session.get("title"), "notes": session.get("notes"), "created_by": username})
-    return {"status": "saved", "title": session.get("title")}
+    res = {"status": "saved"}
+    if session.get("title"):
+        res["title"] = session.get("title")
+    return res
 
 
 class UpdateTitleRequest(BaseModel):

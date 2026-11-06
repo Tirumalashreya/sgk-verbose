@@ -32,7 +32,12 @@ _FOLD = [("ḻ", "l"), ("ḷ", "l"), ("ṟ", "r"), ("ṉ", "n"), ("ṇ", "n"), (
 def skeleton(text: str, script: str = "telugu") -> str:
     from indic_transliteration import sanscript
     from indic_transliteration.sanscript import transliterate
-    src = sanscript.TAMIL if script == "tamil" else sanscript.TELUGU
+    if script == "tamil" or any('\u0b80' <= c <= '\u0bff' for c in text):
+        src = sanscript.TAMIL
+    elif script == "devanagari" or any('\u0900' <= c <= '\u097f' for c in text):
+        src = sanscript.DEVANAGARI
+    else:
+        src = sanscript.TELUGU
     s = transliterate(text, src, sanscript.IAST).lower()
     for a, b in _FOLD:
         s = s.replace(a, b)
@@ -48,12 +53,21 @@ def _index():
         verses = json.load(f)["verses"]
     lines, grams = [], {}
     for v in verses:
-        for li, text in enumerate(v["lines"]):
+        for li, text in enumerate(v.get("lines", [])):
             sk = skeleton(text, "tamil")
             if len(sk) < MIN_LINE_SKELETON:
                 continue
             lid = len(lines)
             lines.append({"verse": v, "line": li, "text": text, "skel": sk})
+            for g in {sk[i:i + NGRAM] for i in range(len(sk) - NGRAM + 1)}:
+                grams.setdefault(g, []).append(lid)
+        for li, alt_text in enumerate(v.get("alt_lines", [])):
+            sk = skeleton(alt_text, "telugu")
+            if len(sk) < MIN_LINE_SKELETON:
+                continue
+            lid = len(lines)
+            orig_text = v["lines"][min(li, len(v["lines"]) - 1)] if v.get("lines") else alt_text
+            lines.append({"verse": v, "line": li, "text": orig_text, "skel": sk})
             for g in {sk[i:i + NGRAM] for i in range(len(sk) - NGRAM + 1)}:
                 grams.setdefault(g, []).append(lid)
     return lines, grams
@@ -160,16 +174,20 @@ def match_verse(text: str, min_score: int = MIN_SCORE, min_skeleton: int = 12) -
     if best is None:
         return None
     line = lines[best[1]]
-    return {"number": line["verse"]["number"], "lines": [line["text"]], "score": round(best[0])}
+    verse = line["verse"]
+    return {"number": verse["number"], "lines": [line["text"]], "score": round(best[0]), "ref": verse.get("ref")}
 
 
 def reference(match: dict) -> dict:
+    ref_src = match.get("ref") or "Project Madurai"
     return {"collection": "Nalayira Divya Prabandham", "number": match["number"],
-            "source": "Project Madurai", "score": match["score"]}
+            "source": ref_src, "score": match["score"]}
 
 
 def original_line(match: dict) -> str:
-    """Tamil source text for the notes' second line (no parentheses: the notes
+    """Tamil/Sanskrit source text for the notes' second line (no parentheses: the notes
     use them to delimit this field)."""
-    text = " / ".join(match["lines"]).replace("(", "").replace(")", "")
-    return f"{text} · நாலாயிர திவ்ய பிரபந்தம் {match['number']}"
+    text = " / ".join(match["lines"])
+    ref_tag = match.get("ref") or f"நாலாயிர திவ்ய பிரபந்தம் {match['number']}"
+    combined = f"{text} · {ref_tag}"
+    return combined.replace("(", "").replace(")", "")
