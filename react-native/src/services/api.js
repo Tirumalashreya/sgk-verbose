@@ -192,13 +192,28 @@ export const downloadSessionAudio = async (sessionId, customTitle) => {
   const token = await authToken();
   const url = `${API_BASE}/sessions/${sessionId}/audio`;
   const cleanTitle = (customTitle || 'pravachanam').replace(/[^a-z0-9\u0C00-\u0C7F ]/gi, '_').trim() || 'recording';
-  const fileName = `${cleanTitle}.webm`;
 
   if (isWeb) {
     const res = await fetch(url, {
       headers: token ? { Authorization: `Basic ${token}` } : {},
     });
     if (!res.ok) throw new Error('Audio not available');
+
+    let ext = '.m4a';
+    const cd = res.headers.get('content-disposition') || '';
+    const match = cd.match(/filename=["']?([^"';]+)["']?/i);
+    if (match && match[1]) {
+      const dotIdx = match[1].lastIndexOf('.');
+      if (dotIdx !== -1) ext = match[1].slice(dotIdx);
+    } else {
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('audio/webm')) ext = '.webm';
+      else if (ct.includes('audio/mpeg')) ext = '.mp3';
+      else if (ct.includes('audio/wav')) ext = '.wav';
+      else if (ct.includes('audio/mp4') || ct.includes('audio/aac')) ext = '.m4a';
+    }
+    const fileName = `${cleanTitle}${ext}`;
+
     const blob = await res.blob();
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -213,6 +228,7 @@ export const downloadSessionAudio = async (sessionId, customTitle) => {
 
   const FileSystemLegacy = await import('expo-file-system/legacy');
   const Sharing = await import('expo-sharing');
+  const fileName = `${cleanTitle}.m4a`;
   const destUri = `${FileSystemLegacy.cacheDirectory}${fileName}`;
   await FileSystemLegacy.downloadAsync(url, destUri, {
     headers: token ? { Authorization: `Basic ${token}` } : {},

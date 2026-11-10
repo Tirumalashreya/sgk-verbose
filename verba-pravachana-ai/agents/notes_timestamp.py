@@ -59,32 +59,61 @@ def _concat_live_pieces(session_id: str) -> str | None:
     paths = _live_piece_paths(session_id)
     if not paths:
         return None
-    if len(paths) == 1 and os.path.exists(paths[0]) and os.path.getsize(paths[0]) > 0:
-        return paths[0]
 
     out_dir = os.path.join("audio_input", ".work")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"concat_{session_id[:8]}.webm")
-    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-        return out_path
-    list_file = out_path + ".txt"
+    out_path_m4a = os.path.join(out_dir, f"concat_{session_id[:8]}.m4a")
+    out_path_webm = os.path.join(out_dir, f"concat_{session_id[:8]}.webm")
+    if os.path.exists(out_path_m4a) and os.path.getsize(out_path_m4a) > 0:
+        return out_path_m4a
+
+    if len(paths) == 1 and os.path.exists(paths[0]) and os.path.getsize(paths[0]) > 0:
+        single = paths[0]
+        if single.endswith(".m4a") or single.endswith(".mp3"):
+            return single
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", single, "-c:a", "aac", "-b:a", "128k", out_path_m4a],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+            )
+            if os.path.exists(out_path_m4a) and os.path.getsize(out_path_m4a) > 0:
+                return out_path_m4a
+        except Exception:
+            pass
+        return single
+    if os.path.exists(out_path_webm) and os.path.getsize(out_path_webm) > 0:
+        # Convert webm to m4a if not already done
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", out_path_webm, "-c:a", "aac", "-b:a", "128k", out_path_m4a],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+            )
+            if os.path.exists(out_path_m4a) and os.path.getsize(out_path_m4a) > 0:
+                return out_path_m4a
+        except Exception:
+            pass
+        return out_path_webm
+
+    list_file = out_path_webm + ".txt"
     try:
         with open(list_file, "w", encoding="utf-8") as f:
             for p in paths:
                 f.write(f"file '{os.path.abspath(p)}'\n")
+        # 1. Fast stream-copy into webm first
         subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path_webm],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
         )
+        # 2. Convert to universal AAC m4a for Apple QuickTime and Windows compatibility
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", out_path_webm, "-c:a", "aac", "-b:a", "128k", out_path_m4a],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+        )
+        if os.path.exists(out_path_m4a) and os.path.getsize(out_path_m4a) > 0:
+            return out_path_m4a
     except Exception as e:
-        print(f"[notes_timestamp] ffmpeg stream-copy concat failed ({e}) — retrying with aac encode")
-        if os.path.exists(out_path):
-            try:
-                os.remove(out_path)
-            except OSError:
-                pass
+        print(f"[notes_timestamp] ffmpeg stream-copy/aac failed ({e}) — retrying direct aac encode")
         try:
-            out_path_m4a = os.path.join(out_dir, f"concat_{session_id[:8]}.m4a")
             subprocess.run(
                 ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c:a", "aac", "-b:a", "128k", out_path_m4a],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
@@ -92,17 +121,18 @@ def _concat_live_pieces(session_id: str) -> str | None:
             if os.path.exists(out_path_m4a) and os.path.getsize(out_path_m4a) > 0:
                 return out_path_m4a
         except Exception as e2:
-            print(f"[notes_timestamp] ffmpeg fallback failed: {e2}")
-            return None
+            print(f"[notes_timestamp] direct aac fallback failed: {e2}")
     finally:
         if os.path.exists(list_file):
             try:
                 os.remove(list_file)
             except OSError:
                 pass
-    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-        return None
-    return out_path
+    if os.path.exists(out_path_m4a) and os.path.getsize(out_path_m4a) > 0:
+        return out_path_m4a
+    if os.path.exists(out_path_webm) and os.path.getsize(out_path_webm) > 0:
+        return out_path_webm
+    return None
 
 
 def _find_audio(session: dict) -> str | None:

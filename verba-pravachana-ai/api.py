@@ -4,13 +4,16 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import asyncio
+import subprocess
 import re
 import threading
 import os
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from graph.orchestrator import app as langgraph_app
+
+_IST = timezone(timedelta(hours=5, minutes=30))
 from agents.rag_agent import rag_agent
 from agents import cancellation
 from auth import check_basic_header, verify_ws_token, auth_enabled, username_from_header, check_admin_header
@@ -81,6 +84,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -410,7 +414,7 @@ async def start_live(request: Request, data: StartLiveRequest | None = None):
     session = {
         "id": str(uuid.uuid4()),
         "type": "chunk_complete",
-        "title": "Live Recording – " + datetime.now().strftime("%d %b %Y, %H:%M"),
+        "title": "Live Recording – " + datetime.now(_IST).strftime("%d %b %Y, %I:%M %p"),
         "created_at": datetime.utcnow().isoformat(),
         "created_by": username,
         "transcript": "", "notes": "", "enhanced_notes": "", "transliterated_notes": "",
@@ -472,6 +476,18 @@ def _recent_errors(limit: int = 30) -> list[dict]:
 async def admin_page():
     import html as _html
     sessions = sorted(sessions_store, key=lambda s: s.get("created_at") or "", reverse=True)
+
+    def _fmt_ist(iso_str: str) -> str:
+        if not iso_str:
+            return "—"
+        try:
+            dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(_IST).strftime("%d %b %Y, %I:%M %p IST")
+        except Exception:
+            return iso_str
+
     def _session_row(s):
         is_deleted = bool(s.get("deleted"))
         is_archived = bool(s.get("archived"))
@@ -485,7 +501,7 @@ async def admin_page():
         else:
             visibility = "<span style='color:#51cf66'>visible</span>"
         return (
-            f"{open_tag}<td>{_html.escape(s.get('created_at') or '')}</td>"
+            f"{open_tag}<td>{_html.escape(_fmt_ist(s.get('created_at')))}</td>"
             f"<td>{_html.escape(s.get('title') or '')}</td>"
             f"<td>{_html.escape(s.get('created_by') or '—')}</td>"
             f"<td>{kind}</td><td>{len(s.get('notes') or '')}</td>"
@@ -494,7 +510,7 @@ async def admin_page():
     rows = "".join(_session_row(s) for s in sessions[:200])
     errors = _recent_errors()
     error_rows = "".join(
-        f"<tr><td>{_html.escape(e['when'])}</td><td>{_html.escape(e['chunk'])}</td>"
+        f"<tr><td>{_html.escape(_fmt_ist(e['when']))}</td><td>{_html.escape(e['chunk'])}</td>"
         f"<td>{_html.escape(e['by'])}</td>"
         f"<td><pre>{_html.escape(e['detail'])}</pre></td></tr>"
         for e in errors
@@ -583,14 +599,31 @@ async def get_session_audio(session_id: str, request: Request):
     if not audio_path or not os.path.exists(audio_path):
         raise HTTPException(status_code=404, detail="Audio file not available on server")
 
+    # If it is a webm file (like from live recording chunks), convert or serve .m4a so it plays
+    # natively on Mac (QuickTime), iPhone/iOS, Android, and Windows Media Player out-of-the-box.
+    if audio_path.endswith(".webm"):
+        m4a_path = os.path.splitext(audio_path)[0] + ".m4a"
+        if os.path.exists(m4a_path) and os.path.getsize(m4a_path) > 0:
+            audio_path = m4a_path
+        else:
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", audio_path, "-c:a", "aac", "-b:a", "128k", m4a_path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+                )
+                if os.path.exists(m4a_path) and os.path.getsize(m4a_path) > 0:
+                    audio_path = m4a_path
+            except Exception as e:
+                print(f"[get_session_audio] webm to m4a conversion failed ({e}), serving original")
+
     raw_title = session.get("title") or "pravachanam"
     clean_title = re.sub(r'[^\w\s-]', '', raw_title).strip() or "recording"
     clean_title = re.sub(r'[-\s]+', '_', clean_title)
-    ext = os.path.splitext(audio_path)[1] or ".webm"
+    ext = os.path.splitext(audio_path)[1] or ".m4a"
     media_type = (
-        "audio/webm" if ext == ".webm" else
-        "audio/mpeg" if ext == ".mp3" else
         "audio/mp4" if ext in (".m4a", ".mp4") else
+        "audio/mpeg" if ext == ".mp3" else
+        "audio/webm" if ext == ".webm" else
         "audio/wav" if ext == ".wav" else
         "application/octet-stream"
     )
