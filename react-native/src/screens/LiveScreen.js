@@ -8,7 +8,6 @@ import { palettes, F, T, S, R } from '../theme';
 import { Button, IconButton, Chip, StagePath, Overline, Enter, Portrait } from '../ui/kit';
 import Waveform from '../ui/Waveform';
 import Kolam from '../ui/Kolam';
-import Icon from '../ui/Icon';
 import { createWebSocket, startLive, stopSession, uploadAudio, cancelUpload, startSession, getSessions } from '../services/api';
 import { useMinuteRecorder } from '../services/useMinuteRecorder';
 import { notify, choose, confirm, isWeb } from '../services/platform';
@@ -36,8 +35,6 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
   const [preview, setPreview] = useState([]);
   const [error, setError] = useState('');
   const [elapsed, setElapsed] = useState(0);
-  const [silentWarning, setSilentWarning] = useState(false);
-  const silenceTimer = useRef(null);
   const pieces = useRef(0);
   const startedAt = useRef(0);
   const pausedAt = useRef(0);
@@ -58,36 +55,6 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
     const id = setInterval(() => setElapsed(Date.now() - startedAt.current), 1000);
     return () => clearInterval(id);
   }, [mode]);
-
-  useEffect(() => {
-    if (mode !== 'recording') {
-      if (silenceTimer.current) {
-        clearTimeout(silenceTimer.current);
-        silenceTimer.current = null;
-      }
-      setSilentWarning(false);
-      return;
-    }
-
-    if (recorder.level >= 0.02) {
-      if (silenceTimer.current) {
-        clearTimeout(silenceTimer.current);
-        silenceTimer.current = null;
-      }
-      setSilentWarning(false);
-    } else if (!silenceTimer.current && !silentWarning) {
-      silenceTimer.current = setTimeout(() => {
-        setSilentWarning(true);
-        silenceTimer.current = null;
-      }, 4000);
-    }
-  }, [mode, recorder.level, silentWarning]);
-
-  useEffect(() => {
-    return () => {
-      if (silenceTimer.current) clearTimeout(silenceTimer.current);
-    };
-  }, []);
 
   // ── pipeline events ─────────────────────────────────────────────────────
   const onMessage = (data) => {
@@ -253,14 +220,6 @@ export default function LiveScreen({ go, back, t, upload, setUpload, pendingUplo
         <View style={{ marginTop: S.x3 }}>
           <Waveform color={c.brassBright} accent={c.kumkum} bars={32} height={72} level={level} />
         </View>
-        {silentWarning && recording && (
-          <View style={{ marginTop: S.m, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(168, 50, 47, 0.08)', borderWidth: 1, borderColor: c.kumkumText, borderRadius: R.control, paddingVertical: 6, paddingHorizontal: S.m }}>
-            <Icon name="alert" size={16} color={c.kumkumText} strokeWidth={2} />
-            <Text style={[T.label, { color: c.kumkumText, fontSize: 13 }, isTe(t('micSilenceWarning')) && { fontFamily: F.readMed }]}>
-              {t('micSilenceWarning')}
-            </Text>
-          </View>
-        )}
         <Enter delay={60} style={{ alignItems: 'center', marginTop: S.l, paddingHorizontal: S.xl }}>
           <Text style={[isTe(heading) ? T.displayTe : T.display, { color: c.ink, textAlign: 'center' }]} numberOfLines={2}>{heading}</Text>
           {mode === 'idle' && (
