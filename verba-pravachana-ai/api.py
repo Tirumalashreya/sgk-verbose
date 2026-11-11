@@ -130,7 +130,105 @@ def _db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at TEXT, data TEXT NOT NULL)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
+    conn.execute("CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY AUTOINCREMENT, when_ist TEXT, username TEXT, action TEXT, ip TEXT, location TEXT, device TEXT)")
     return conn
+
+
+_GEO_CACHE: dict[str, dict] = {}
+
+
+def _get_client_ip(request: Request) -> str:
+    if not request:
+        return ""
+    headers = getattr(request, "headers", None)
+    if headers:
+        real_ip = headers.get("x-real-ip")
+        if real_ip:
+            return real_ip.strip()
+        forwarded = headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    client = getattr(request, "client", None)
+    if client and getattr(client, "host", None):
+        return client.host or ""
+    return ""
+
+
+def _get_ip_location(ip: str) -> dict:
+    if not ip or ip in ("127.0.0.1", "::1", "localhost", "testclient"):
+        return {"city": "Local / Test", "region": "", "country": "", "isp": "", "ip": ip}
+    if ip in _GEO_CACHE:
+        return _GEO_CACHE[ip]
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,query",
+            headers={"User-Agent": "SGK-Notes/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("status") == "success":
+                res = {
+                    "city": data.get("city") or "",
+                    "region": data.get("regionName") or "",
+                    "country": data.get("country") or "",
+                    "isp": data.get("isp") or "",
+                    "ip": ip,
+                }
+                _GEO_CACHE[ip] = res
+                return res
+    except Exception:
+        pass
+    fallback = {"city": "", "region": "", "country": "", "isp": "", "ip": ip}
+    _GEO_CACHE[ip] = fallback
+    return fallback
+
+
+def _fmt_location(geo: dict) -> str:
+    parts = [p for p in (geo.get("city"), geo.get("region"), geo.get("country")) if p]
+    loc = ", ".join(parts)
+    isp = geo.get("isp")
+    if loc and isp:
+        return f"{loc} ({isp})"
+    return loc or geo.get("ip") or "—"
+
+
+def _parse_device(ua: str) -> str:
+    if not ua:
+        return "—"
+    if "iPhone" in ua:
+        return "📱 iPhone"
+    elif "iPad" in ua:
+        return "📱 iPad"
+    elif "Android" in ua:
+        return "📱 Android"
+    elif "Macintosh" in ua:
+        return "💻 Mac"
+    elif "Windows" in ua:
+        return "💻 Windows"
+    elif "Linux" in ua:
+        return "🐧 Linux"
+    return "🌐 Web"
+
+
+def _log_activity(username: str, action: str, request: Request | None = None):
+    try:
+        ip = _get_client_ip(request) if request else ""
+        headers = getattr(request, "headers", None) if request else None
+        ua = headers.get("user-agent", "") if headers else ""
+        geo = _get_ip_location(ip)
+        loc = _fmt_location(geo)
+        dev = _parse_device(ua)
+        when_str = datetime.now(_IST).strftime("%d %b %Y, %I:%M %p IST")
+        with _db() as conn:
+            conn.execute(
+                "INSERT INTO activity (when_ist, username, action, ip, location, device) VALUES (?, ?, ?, ?, ?, ?)",
+                (when_str, username or "anonymous", action, ip, loc, dev)
+            )
+            conn.execute("DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY id DESC LIMIT 200)")
+            conn.commit()
+    except Exception as e:
+        pass
 
 
 def _migrate_json_to_db_if_needed():
@@ -369,6 +467,7 @@ async def stop_session(request: Request, data: StopSessionRequest | None = None)
             session["stopped_at"] = datetime.utcnow().isoformat()
             ready = session["pending"] == 0
         _last_stopped_sessions[username], _last_stopped_at[username] = session, time.time()
+        _log_activity(username, f"Stopped Live Recording ({session.get('title') or session['id'][:8]})", request)
         for stored in sessions_store:          # so the app can offer "continue" right away
             if stored.get("id") == session["id"]:
                 stored["stopped_at"] = session["stopped_at"]
@@ -405,11 +504,19 @@ async def start_live(request: Request, data: StartLiveRequest | None = None):
         return {"status": "ok", "continued": continue_id, "id": session["id"]}
     earlier = next((s for s in sessions_store if continue_id and s.get("id") == continue_id
                      and s.get("created_by") == username), None)
+    client_ip = _get_client_ip(request) if request else ""
+    headers = getattr(request, "headers", None) if request else None
+    ua = headers.get("user-agent", "") if headers else ""
+    geo = _get_ip_location(client_ip)
+    location = _fmt_location(geo)
+    device = _parse_device(ua)
+
     if earlier is not None:
         # Continue: same notes, same id; the new minutes are appended to its transcript
         session = _build_continuation(earlier)
         _live_recording_sessions[username] = session
         _live_by_id[earlier["id"]] = session
+        _log_activity(username, f"Continued Recording ({session.get('title')})", request)
         return {"status": "ok", "continued": earlier["id"], "id": session["id"]}
     session = {
         "id": str(uuid.uuid4()),
@@ -417,6 +524,9 @@ async def start_live(request: Request, data: StartLiveRequest | None = None):
         "title": "Live Recording – " + datetime.now(_IST).strftime("%d %b %Y, %I:%M %p"),
         "created_at": datetime.utcnow().isoformat(),
         "created_by": username,
+        "client_ip": client_ip,
+        "location": location,
+        "device": device,
         "transcript": "", "notes": "", "enhanced_notes": "", "transliterated_notes": "",
         "summary": "", "shlokas": [], "segments": [],
         "pieces": [],          # per-minute results, in recording order (preview only)
@@ -429,6 +539,7 @@ async def start_live(request: Request, data: StartLiveRequest | None = None):
     }
     _live_recording_sessions[username] = session
     _live_by_id[session["id"]] = session
+    _log_activity(username, f"Started Live Recording ({session['title']})", request)
     return {"status": "ok", "id": session["id"]}
 
 
@@ -500,14 +611,38 @@ async def admin_page():
             visibility = "<span style='color:#868e96'>archived</span>"
         else:
             visibility = "<span style='color:#51cf66'>visible</span>"
+        loc = s.get("location") or (f"IP: {s.get('client_ip')}" if s.get("client_ip") else "—")
+        dev = s.get("device") or "—"
         return (
             f"{open_tag}<td>{_html.escape(_fmt_ist(s.get('created_at')))}</td>"
             f"<td>{_html.escape(s.get('title') or '')}</td>"
             f"<td>{_html.escape(s.get('created_by') or '—')}</td>"
+            f"<td>📍 {_html.escape(loc)}</td>"
+            f"<td>{_html.escape(dev)}</td>"
             f"<td>{kind}</td><td>{len(s.get('notes') or '')}</td>"
             f"<td>{visibility}</td></tr>"
         )
     rows = "".join(_session_row(s) for s in sessions[:200])
+
+    activities = []
+    try:
+        with _db() as conn:
+            activities = conn.execute(
+                "SELECT when_ist, username, action, ip, location, device FROM activity ORDER BY id DESC LIMIT 50"
+            ).fetchall()
+    except Exception:
+        pass
+
+    activity_rows = "".join(
+        f"<tr><td>{_html.escape(a[0])}</td>"
+        f"<td><strong>{_html.escape(a[1])}</strong></td>"
+        f"<td>📍 {_html.escape(a[4] or '—')}</td>"
+        f"<td>{_html.escape(a[5] or '—')}</td>"
+        f"<td><code>{_html.escape(a[3] or '—')}</code></td>"
+        f"<td>{_html.escape(a[2] or '—')}</td></tr>"
+        for a in activities
+    ) or "<tr><td colspan='6' style='color:#aaa;'>No user activity logged yet. Activity appears here in real time as users interact with the app.</td></tr>"
+
     errors = _recent_errors()
     error_rows = "".join(
         f"<tr><td>{_html.escape(_fmt_ist(e['when']))}</td><td>{_html.escape(e['chunk'])}</td>"
@@ -518,19 +653,41 @@ async def admin_page():
     page = f"""<!doctype html><html><head><meta charset="utf-8">
 <title>SGKS Notes — Admin</title>
 <style>
-body {{ font-family: -apple-system, sans-serif; background: #1a1625; color: #eee; padding: 24px; }}
-h1, h2 {{ color: #d8b26a; }}
+body {{ font-family: -apple-system, sans-serif; background: #1a1625; color: #eee; padding: 24px; line-height: 1.5; }}
+h1, h2 {{ color: #d8b26a; margin-top: 28px; margin-bottom: 12px; }}
+h1 {{ margin-top: 0; }}
+.badge {{ display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: #332b4d; color: #f2c877; }}
 table {{ border-collapse: collapse; width: 100%; margin-bottom: 36px; font-size: 13px; }}
-td, th {{ border: 1px solid #443d5c; padding: 6px 10px; text-align: left; vertical-align: top; }}
-th {{ background: #2a2340; }}
+td, th {{ border: 1px solid #443d5c; padding: 8px 12px; text-align: left; vertical-align: top; }}
+th {{ background: #2a2340; color: #f2c877; font-weight: 600; }}
 pre {{ white-space: pre-wrap; margin: 0; font-size: 11px; color: #f0a0a0; max-width: 600px; }}
 tr:nth-child(even) {{ background: #221d35; }}
+tr:hover {{ background: #2c2544; }}
+code {{ font-family: Menlo, Monaco, monospace; font-size: 12px; color: #74c0fc; }}
 </style></head><body>
-<h1>SGKS Notes — Admin</h1>
+<h1>SGKS Notes — Admin Dashboard</h1>
+<div style="margin-bottom: 24px; color: #aaa; font-size: 13px;">
+  System Time: <span class="badge">{datetime.now(_IST).strftime("%d %b %Y, %I:%M:%S %p IST")}</span>
+</div>
+
+<h2>🌍 Real-Time User Locations & Activity (Last 50 Events)</h2>
+<p style="color:#aaa; font-size: 12px; margin-top: -6px; margin-bottom: 12px;">Live view of who is using the website, their city/region, internet provider, and device.</p>
+<table>
+  <tr><th>When (IST)</th><th>User</th><th>Location & Network</th><th>Device</th><th>IP Address</th><th>Action</th></tr>
+  {activity_rows}
+</table>
+
 <h2>Sessions ({len(sessions)} total)</h2>
-<table><tr><th>Created</th><th>Title</th><th>By</th><th>Type</th><th>Notes length</th><th>In app?</th></tr>{rows}</table>
+<table>
+  <tr><th>Created (IST)</th><th>Title</th><th>By</th><th>Location & Network</th><th>Device</th><th>Type</th><th>Notes length</th><th>In app?</th></tr>
+  {rows}
+</table>
+
 <h2>Recent errors (last {len(errors)})</h2>
-<table><tr><th>When</th><th>Chunk</th><th>By</th><th>Detail</th></tr>{error_rows}</table>
+<table>
+  <tr><th>When (IST)</th><th>Chunk</th><th>By</th><th>Detail</th></tr>
+  {error_rows}
+</table>
 </body></html>"""
     return Response(content=page, media_type="text/html")
 
@@ -540,6 +697,7 @@ async def get_sessions(request: Request):
     # Strict per-user isolation: Each logged-in user only sees their own
     # notes and recordings on their Home and History screens.
     username = request.state.username
+    _log_activity(username, "Opened App / Viewed Notes", request)
     return {"sessions": [s for s in sessions_store if not s.get("archived") and not s.get("deleted") and s.get("created_by") == username]}
 
 
@@ -627,6 +785,8 @@ async def get_session_audio(session_id: str, request: Request):
         "audio/wav" if ext == ".wav" else
         "application/octet-stream"
     )
+
+    _log_activity(username, f"Downloaded Audio ({clean_title})", request)
 
     return FileResponse(
         path=audio_path,
@@ -942,6 +1102,7 @@ async def upload_audio(request: Request, background_tasks: BackgroundTasks, file
         return {"status": "processing", "piece": piece}
 
     _live_session_id += 1
+    _log_activity(username, f"Uploaded Audio File ({file.filename})", request)
     chunk_index = len(sessions_store)
     audio_path = f"audio_input/upload_{digest[:12]}{ext}"
     with open(audio_path, "wb") as f:
@@ -1061,6 +1222,9 @@ def _finalize_live_session(session: dict):
                                      created_by=session.get("created_by"))
         final["id"], final["created_at"] = session["id"], session["created_at"]
         final["created_by"] = session.get("created_by")
+        final["client_ip"] = session.get("client_ip")
+        final["location"] = session.get("location")
+        final["device"] = session.get("device")
 
         # Pre-stitch live audio pieces in background so master audio file is ready immediately
         from agents import notes_timestamp as nt
