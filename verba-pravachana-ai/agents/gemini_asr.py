@@ -33,6 +33,28 @@ _client = None
 _client_lock = __import__("threading").Lock()
 
 
+def _is_silence(path: str) -> bool:
+    """Detect if an audio file contains only digital zero silence (<= -80 dB)
+    or is an unreadable/empty stub, preventing Gemini from hallucinating text on silent input."""
+    if not os.path.exists(path) or os.path.getsize(path) < 1000:
+        return True
+    try:
+        import subprocess
+        proc = subprocess.run(
+            ["ffmpeg", "-i", path, "-af", "volumedetect", "-vn", "-sn", "-dn", "-f", "null", "/dev/null"],
+            capture_output=True, text=True, timeout=10
+        )
+        for line in proc.stderr.splitlines():
+            if "max_volume:" in line:
+                val = float(line.split("max_volume:")[1].split("dB")[0].strip())
+                return val <= -80.0
+        # If volumedetect didn't report max_volume (e.g. invalid/corrupt stream), treat as silence
+        return True
+    except Exception as e:
+        print(f"[gemini_asr] volume check error on {path}: {e}")
+        return False
+
+
 def _get_client():
     global _client
     with _client_lock:   # threads racing here created two clients and one was closed mid-request
@@ -129,6 +151,9 @@ def _phrases(text: str, words: list[dict], offset: float) -> list[dict]:
 
 def _transcribe_piece(path: str, mode: str, offset: float, attempts: int = 3,
                       use_cache: bool = True) -> tuple[str, list[dict]]:
+    if _is_silence(path):
+        print(f"[gemini_asr] piece {path} is pure digital silence (<= -80 dB), skipping transcribe")
+        return "", []
     with open(path, "rb") as f:
         digest = hashlib.sha1(f.read()).hexdigest()
     vocab_tag = hashlib.sha1("|".join(_vocabulary()).encode()).hexdigest()[:8] if mode == "vocabulary" else ""
@@ -179,6 +204,9 @@ def _transcribe_piece(path: str, mode: str, offset: float, attempts: int = 3,
 
 
 def _llm_piece(path: str, client=None, use_cache: bool = True, attempts: int = 3) -> str:
+    if _is_silence(path):
+        print(f"[gemini_asr] piece {path} is pure digital silence (<= -80 dB), skipping to avoid hallucination")
+        return ""
     from google.genai import types
     with open(path, "rb") as f:
         audio = f.read()
@@ -283,6 +311,10 @@ def _process_one_piece(i: int, piece: str, total: int, mode: str, piece_seconds:
     if cancellation.is_cancelled(digest):
         return i, "", [], False
     offset = i * piece_seconds
+
+    if _is_silence(piece):
+        print(f"  [gemini piece {i + 1}/{total}] Pure digital silence (<= -80 dB), skipping transcription without hallucinating")
+        return i, "", [], False
 
     if mode != "llm":
         try:

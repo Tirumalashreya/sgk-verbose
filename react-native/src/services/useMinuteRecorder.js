@@ -107,6 +107,17 @@ function useNativeMinuteRecorder(onPiece) {
 // stream — the mic connection itself is never touched between pieces, only
 // the recorder is stopped and restarted on top of it, and stop() always
 // produces one complete, independent, valid file.
+//
+// Screen Lock & Background Survival:
+// 1. Screen Wake Lock API keeps the display awake while recording so phones don't auto-sleep.
+// 2. An active looping silent HTML5 <audio> element + MediaSession API tells Android/iOS this
+//    is an active media playback stream, preventing the OS from suspending the CPU or muting
+//    the mic if the user manually locks the phone or switches apps.
+// 3. An inline Web Worker timer drives minute piece-cutting so background DOM setTimeout
+//    throttling never freezes or delays piece uploads.
+
+const SILENT_WAV_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+
 function useWebMinuteRecorder(onPiece) {
   const streamRef = useRef(null);
   const recorderRef = useRef(null);
@@ -116,6 +127,9 @@ function useWebMinuteRecorder(onPiece) {
   const rafId = useRef(null);
   const running = useRef(false);
   const timer = useRef(null);
+  const workerRef = useRef(null);
+  const wakeLockRef = useRef(null);
+  const silentAudioRef = useRef(null);
   const chain = useRef(Promise.resolve());   // pieces are cut and uploaded strictly in order
   const startedAt = useRef(0);
   const pieceStartedAt = useRef(0);
@@ -125,6 +139,107 @@ function useWebMinuteRecorder(onPiece) {
   const [isRecording, setIsRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [durationMillis, setDurationMillis] = useState(0);
+
+  // ── Wake Lock: keep screen on while recording ───────────────────────────
+  const acquireWakeLock = async () => {
+    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        wakeLockRef.current.addEventListener('release', () => {
+          wakeLockRef.current = null;
+        });
+        console.log('[live] screen wake lock acquired');
+      } catch (err) {
+        console.warn('[live] wake lock request failed:', err?.message || err);
+      }
+    }
+  };
+
+  const releaseWakeLock = async () => {
+    if (wakeLockRef.current) {
+      try { await wakeLockRef.current.release(); } catch {}
+      wakeLockRef.current = null;
+    }
+  };
+
+  // ── Background Audio Keeper & MediaSession: prevent OS background muting ─
+  const startBackgroundKeeper = () => {
+    try {
+      if (!silentAudioRef.current && typeof document !== 'undefined') {
+        const audio = document.createElement('audio');
+        audio.id = 'sgk-bg-keeper';
+        audio.src = SILENT_WAV_BASE64;
+        audio.loop = true;
+        audio.setAttribute('playsinline', 'true');
+        audio.setAttribute('webkit-playsinline', 'true');
+        audio.volume = 0.01;
+        document.body.appendChild(audio);
+        silentAudioRef.current = audio;
+      }
+      silentAudioRef.current?.play().catch((e) => {
+        console.warn('[live] background audio play deferred:', e?.message || e);
+      });
+    } catch (err) {
+      console.warn('[live] background keeper init error:', err);
+    }
+
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'SGK Pravachana Recording',
+          artist: 'Microphone Active (Do not close tab)',
+          album: 'Live Discourse Session',
+        });
+        navigator.mediaSession.playbackState = 'playing';
+      } catch {}
+    }
+  };
+
+  const stopBackgroundKeeper = () => {
+    if (silentAudioRef.current) {
+      try {
+        silentAudioRef.current.pause();
+        silentAudioRef.current.remove();
+      } catch {}
+      silentAudioRef.current = null;
+    }
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.playbackState = 'none';
+      } catch {}
+    }
+  };
+
+  // ── Unthrottled Web Worker Timer for Minute Slicing ─────────────────────
+  const initWorker = () => {
+    if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined') return null;
+    try {
+      const blob = new Blob([`
+        let timerId = null;
+        self.onmessage = function(e) {
+          const data = e.data || {};
+          if (data.action === 'schedule') {
+            if (timerId) clearTimeout(timerId);
+            timerId = setTimeout(function() {
+              self.postMessage('cut');
+            }, Math.max(data.ms || 60000, 1000));
+          } else if (data.action === 'cancel') {
+            if (timerId) { clearTimeout(timerId); timerId = null; }
+          }
+        };
+      `], { type: 'application/javascript' });
+      const worker = new Worker(URL.createObjectURL(blob));
+      worker.onmessage = (e) => {
+        if (e.data === 'cut' && running.current) {
+          cutPiece(false);
+        }
+      };
+      return worker;
+    } catch (e) {
+      console.warn('[live] web worker timer unavailable, fallback to setTimeout', e);
+      return null;
+    }
+  };
 
   const pollMeter = () => {
     const analyser = analyserRef.current;
@@ -145,9 +260,32 @@ function useWebMinuteRecorder(onPiece) {
     rafId.current = requestAnimationFrame(pollMeter);
   };
 
+  const cancelCutSchedule = () => {
+    clearTimeout(timer.current);
+    timer.current = null;
+    workerRef.current?.postMessage({ action: 'cancel' });
+  };
+
+  const scheduleCut = (ms) => {
+    cancelCutSchedule();
+    const delay = Math.max(ms, 1000);
+    if (workerRef.current) {
+      workerRef.current.postMessage({ action: 'schedule', ms: delay });
+    } else {
+      timer.current = setTimeout(() => cutPiece(false), delay);
+    }
+  };
+
   const teardown = () => {
     cancelAnimationFrame(rafId.current);
     rafId.current = null;
+    cancelCutSchedule();
+    if (workerRef.current) {
+      try { workerRef.current.terminate(); } catch {}
+      workerRef.current = null;
+    }
+    releaseWakeLock();
+    stopBackgroundKeeper();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     audioCtxRef.current?.close().catch(() => {});
@@ -171,11 +309,8 @@ function useWebMinuteRecorder(onPiece) {
     return recorder;
   };
 
-  /** Ends the current minute's recording (one complete file) and, unless this
-   * is the last piece, starts the next minute on the same open stream. */
-  const scheduleCut = (ms) => { timer.current = setTimeout(() => cutPiece(false), Math.max(ms, 1000)); };
-
   const cutPiece = (isLast) => {
+    cancelCutSchedule();
     chain.current = chain.current.then(() => new Promise((resolve) => {
       const recorder = recorderRef.current;
       if (!recorder || recorder.state === 'inactive') { resolve(); return; }
@@ -196,12 +331,32 @@ function useWebMinuteRecorder(onPiece) {
 
   const start = async () => {
     let stream;
+    const audioConstraints = {
+      audio: {
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: true,
+      }
+    };
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
     } catch {
-      throw new Error('mic-denied');
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        throw new Error('mic-denied');
+      }
     }
     streamRef.current = stream;
+
+    // Monitor track state
+    const track = stream.getAudioTracks()[0];
+    if (track) {
+      track.onmute = () => console.warn('[live] microphone track muted by system');
+      track.onunmute = () => console.log('[live] microphone track unmuted');
+      track.onended = () => console.warn('[live] microphone track ended');
+    }
 
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const ctx = new AudioContextClass();
@@ -216,6 +371,10 @@ function useWebMinuteRecorder(onPiece) {
     mimeTypeRef.current = typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('audio/webm')
       ? 'audio/webm' : '';
     running.current = true;
+    workerRef.current = initWorker();
+    await acquireWakeLock();
+    startBackgroundKeeper();
+
     recorderRef.current = newRecorderOnTheOpenStream();
     recorderRef.current.start();   // no timeslice — one complete file per start()/stop() cycle
     pieceStartedAt.current = Date.now();
@@ -231,12 +390,13 @@ function useWebMinuteRecorder(onPiece) {
   // stretch simply missing, not a stop/restart that would need stitching.
   const pause = () => {
     if (!running.current || paused) return;
-    clearTimeout(timer.current);
+    cancelCutSchedule();
     recorderRef.current?.pause();
     cancelAnimationFrame(rafId.current);
     pausedSince.current = Date.now();
     setPaused(true);
     setLevel(0);
+    stopBackgroundKeeper();
   };
 
   const resume = () => {
@@ -244,6 +404,8 @@ function useWebMinuteRecorder(onPiece) {
     const pausedMs = Date.now() - pausedSince.current;
     pausedMsThisPiece.current += pausedMs;
     startedAt.current += pausedMs;   // so durationMillis reflects recorded time, not wall-clock
+    startBackgroundKeeper();
+    acquireWakeLock();
     recorderRef.current?.resume();
     const elapsedInPiece = Date.now() - pieceStartedAt.current - pausedMsThisPiece.current;
     scheduleCut(PIECE_MS - elapsedInPiece);
@@ -256,13 +418,43 @@ function useWebMinuteRecorder(onPiece) {
     running.current = false;
     setIsRecording(false);
     setPaused(false);
-    clearTimeout(timer.current);
+    cancelCutSchedule();
+    releaseWakeLock();
+    stopBackgroundKeeper();
     await cutPiece(true);
     await chain.current;
     teardown();
   };
 
-  useEffect(() => () => teardown(), []);   // release the mic if the screen unmounts mid-recording
+  useEffect(() => {
+    const handleVisibility = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && running.current) {
+        // Re-acquire wake lock if released by OS while backgrounded
+        if (!wakeLockRef.current) {
+          await acquireWakeLock();
+        }
+        // Resume AudioContext if suspended by OS
+        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+          await audioCtxRef.current.resume().catch(() => {});
+        }
+        // If an entire piece interval elapsed while frozen, trigger immediate cut
+        const elapsedThisPiece = Date.now() - pieceStartedAt.current - pausedMsThisPiece.current;
+        if (elapsedThisPiece >= PIECE_MS) {
+          console.log('[live] cutting overdue piece after visibility restored');
+          cutPiece(false);
+        }
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
+      teardown();
+    };
+  }, []);
 
   return { start, stop, pause, resume, paused, level, isRecording, durationMillis };
 }
