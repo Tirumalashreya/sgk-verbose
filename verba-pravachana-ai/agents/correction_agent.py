@@ -179,6 +179,7 @@ def _apply_quote_commands(text: str) -> tuple[str, int]:
 # at meaning), and keep the original right after it in brackets so nothing
 # is lost or silently rewritten.
 _TAMIL_RUN = re.compile(r'[஀-௿](?:[஀-௿\s]*[஀-௿])?')
+_DEVANAGARI_RUN = re.compile(r'[ऀ-ॿ](?:[ऀ-ॿ\s]*[ऀ-ॿ])?')
 
 
 def _apply_tamil_transliteration(text: str) -> tuple[str, int]:
@@ -198,6 +199,25 @@ def _apply_tamil_transliteration(text: str) -> tuple[str, int]:
     return text, count
 
 
+def _apply_devanagari_transliteration(text: str) -> tuple[str, int]:
+    from agents.verbatim import devanagari_to_telugu
+    count = 0
+
+    def repl(m):
+        nonlocal count
+        original = m.group(0)
+        if original.strip() in ('।', '॥'):
+            return original
+        telugu = devanagari_to_telugu(original)
+        if not telugu:
+            return original
+        count += 1
+        return telugu
+
+    text = _DEVANAGARI_RUN.sub(repl, text)
+    return text, count
+
+
 def correction_agent(state: VerbaState) -> VerbaState:
     transcript = state.get("transcript", "") or ""
 
@@ -207,12 +227,15 @@ def correction_agent(state: VerbaState) -> VerbaState:
 
     state["raw_transcript"] = transcript
     fixed, n_tamil = _apply_tamil_transliteration(transcript)
+    fixed, n_dev = _apply_devanagari_transliteration(fixed)
     fixed, n = _apply_term_fixes(fixed)
     fixed, n_brackets = _apply_bracket_commands(fixed)
     fixed, n_quotes = _apply_quote_commands(fixed)
-    n += n_brackets + n_quotes + n_tamil
+    n += n_brackets + n_quotes + n_tamil + n_dev
     if n_tamil:
         print(f"[correction] transliterated {n_tamil} raw Tamil-script fragment(s)")
+    if n_dev:
+        print(f"[correction] transliterated {n_dev} raw Devanagari-script fragment(s)")
     if n_brackets:
         print(f"[correction] converted {n_brackets} spoken bracket instruction(s)")
     if n_quotes:

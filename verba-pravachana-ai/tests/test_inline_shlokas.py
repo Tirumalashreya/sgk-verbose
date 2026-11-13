@@ -12,7 +12,8 @@ def test_a_two_word_verse_stays_inline_with_its_sentence():
     shlokas = [{"text": "ఓం నమో", "original": "ॐ नमो"}]
     notes = format_notes(transcript, shlokas)
     assert "\n" not in notes.strip()   # one flowing line, not a line of its own
-    assert '**"ఓం నమో"** (ॐ नमो)' in notes
+    assert '**"ఓం నమో"**' in notes
+    assert '(ॐ नमो)' not in notes
     assert notes.startswith("ఆయన") and notes.endswith("కొనసాగించారు.")
 
 
@@ -24,7 +25,8 @@ def test_a_full_sentence_verse_still_gets_its_own_line():
     shlokas = [{"text": verse, "original": "निस्त्रैगुण्यो भवार्जुन"}]
     notes = format_notes(transcript, shlokas)
     lines = [l for l in notes.split("\n") if l.strip()]
-    assert any(l.strip().startswith(f'**"{verse}') and l.strip().endswith('(निस्त्रैगुण्यो भवार्जुन)') for l in lines)
+    assert any(l.strip().startswith(f'**"{verse}') for l in lines)
+    assert '(निस्त्रैगुण्यो भवार्जुन)' not in notes
 
 
 def test_inline_markup_survives_exact_reconstruction():

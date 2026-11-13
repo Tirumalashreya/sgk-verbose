@@ -203,18 +203,12 @@ export function StagePath({ c, stages, labels, done, active }) {
   );
 }
 
-/** A verse on its own line: Telugu as spoken, verified original beneath. */
+/** A verse on its own line: Telugu as spoken, highlighted. Native Sanskrit/Tamil original omitted per user requirement. */
 export function VerseBlock({ c, text, original, reference, type }) {
-  const isTamil = /[஀-௿]/.test(original || '');
-  const isDev = /[ऀ-ॿ]/.test(original || '');
-  const [origText, refText] = (original || '').split(' · ');
   return (
     <View style={[st.verse, { borderLeftColor: c.brass, backgroundColor: c.surface }]} accessibilityRole="text">
       {!!type && <Overline c={c} style={{ marginBottom: 6 }}>{type}</Overline>}
       <Text selectable style={[T.verse, { color: c.ink }]}>{text}</Text>
-      {!!origText && !isTamil && (
-        <Text selectable style={[isDev ? T.verseDev : T.verse, { color: c.inkSoft, marginTop: 6 }]}>{origText}</Text>
-      )}
     </View>
   );
 }
@@ -226,12 +220,12 @@ export function VerseBlock({ c, text, original, reference, type }) {
 const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
 const SHLOKA_MARK = /\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?/g;
 
-const stripTamilBrackets = (s) => (s || '').replace(/\s*\([஀-௿\s·\d-]+\)/g, '');
+const stripUnwantedBrackets = (s) => (s || '').replace(/\s*\([^)]*[\u0900-\u097f\u0b80-\u0bff][^)]*\)/g, '');
 
 /** Telugu reads first for an inline verse, whichever field it's actually in;
  *  the other script (if there is one) follows in brackets. Never guesses —
  *  if neither side is in Telugu script, it shows what there is, no bracket.
- *  Tamil script in brackets is omitted per user preference. */
+ *  Tamil and Sanskrit scripts in brackets are omitted per user preference. */
 function teluguFirst(text, original) {
   let primary = text;
   let bracket = original || '';
@@ -239,7 +233,7 @@ function teluguFirst(text, original) {
     primary = original;
     bracket = text;
   }
-  if (/[஀-௿]/.test(bracket)) {
+  if (/[஀-௿\u0900-\u097f]/.test(bracket)) {
     bracket = '';
   }
   return { primary, bracket };
@@ -271,8 +265,7 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
       flush();
       markHeadingIfFirst();
       const meta = shlokas.find((s) => (s.text || '').trim() === whole[1].trim());
-      const orig = whole[2] && !/[஀-௿]/.test(whole[2]) ? whole[2] : '';
-      blocks.push({ kind: 'verse', text: whole[1], original: orig, type: typeLabel(meta?.type) });
+      blocks.push({ kind: 'verse', text: whole[1], original: '', type: typeLabel(meta?.type) });
       continue;
     }
     const inline = [...line.matchAll(SHLOKA_MARK)];
@@ -283,14 +276,14 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
       let last = 0;
       for (const m of inline) {
         if (m.index > last) parts.push({ kind: 'text', text: line.slice(last, m.index) });
-        parts.push({ kind: 'verse', text: m[1], original: m[2] });
+        parts.push({ kind: 'verse', text: m[1], original: '' });
         last = m.index + m[0].length;
       }
       if (last < line.length) parts.push({ kind: 'text', text: line.slice(last) });
       blocks.push({ kind: 'p-inline', parts });
       continue;
     }
-    para.push(stripTamilBrackets(line).replace(/\*\*/g, ''));
+    para.push(stripUnwantedBrackets(line).replace(/\*\*/g, ''));
   }
   flush();
   // Bigger, bold, near-black for the notes body, by request — detected verses
@@ -308,7 +301,7 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
         if (b.kind === 'p-inline') return (
           <Text key={i} selectable style={[baseStyle, { color: bodyColor }]}>
             {b.parts.map((p, j) => {
-              if (p.kind === 'text') return stripTamilBrackets(p.text);
+              if (p.kind === 'text') return stripUnwantedBrackets(p.text);
               const { primary, bracket } = teluguFirst(p.text, p.original);
               return (
                 <Text key={j} style={{ fontFamily: F.readBold, fontSize: T.readBig.fontSize, color: c.brass }}>
@@ -318,7 +311,7 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
             })}
           </Text>
         );
-        return <Text key={i} selectable style={[baseStyle, { color: bodyColor }]}>{stripTamilBrackets(b.text)}</Text>;
+        return <Text key={i} selectable style={[baseStyle, { color: bodyColor }]}>{stripUnwantedBrackets(b.text)}</Text>;
       })}
     </View>
   );

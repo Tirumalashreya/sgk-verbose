@@ -98,7 +98,10 @@ def tamil_to_telugu(text: str) -> str:
     try:
         from indic_transliteration import sanscript
         from indic_transliteration.sanscript import transliterate
-        return transliterate(text, sanscript.TAMIL, sanscript.TELUGU)
+        out = transliterate(text, sanscript.TAMIL, sanscript.TELUGU)
+        # Map any unmapped Tamil-specific alveolar characters to Telugu equivalents
+        out = out.replace('ன', 'న').replace('ஂ', 'ం').replace('ஃ', 'ః')
+        return out
     except Exception as e:
         print(f"[verbatim] tamil-to-telugu transliteration failed: {e}")
         return ""

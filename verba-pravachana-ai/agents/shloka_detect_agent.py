@@ -87,18 +87,12 @@ def shloka_detect_agent(state: VerbaState) -> VerbaState:
         a, b = expand_to_words(norm_transcript, *spans[0])
         text = norm_transcript[a:b]
         spans = find_all(norm_transcript, text)
-        # Never show a script we are not sure of: a missing second line is
-        # better than a Tamil pasuram rendered in Devanagari
         script = verse_script(text, lang)
         if has_devanagari(text):
-            # Sarvam already wrote this verse in Devanagari — show Telugu script as the second line
-            original = transliterate_to_telugu(text)
-        elif script == "Sanskrit":
-            # Telugu-script Sanskrit → Devanagari (same sounds, different script)
-            original = transliterate_to_devanagari(text)
-        else:
-            # Tamil: Telugu→Tamil script is lossy; unknown: don't guess
-            original = ""
+            # If written in Devanagari, convert to Telugu script for Telugu audience
+            text = transliterate_to_telugu(text) or text
+        # No native Sanskrit or Tamil original attached in brackets per user requirement
+        original = ""
         if script != "unknown" and script.lower() not in lang.lower():
             print(f"  shloka relabelled {lang!r} → {script!r} from its sounds: {text[:40]!r}")
         shlokas.append({
@@ -186,7 +180,7 @@ def _verify_with_library(norm_transcript: str, shlokas: list) -> list:
                 s["start_index"], s["end_index"] = new_start, new_end
                 s["occurrences"] = [[new_start, new_end]]
             s.update({"language": "Tamil", "type": "Paasuram", "script_certain": True,
-                      "original": verse_library.original_line(m), "reference": verse_library.reference(m)})
+                      "original": "", "reference": verse_library.reference(m)})
 
     taken = [(a, b) for s in shlokas for a, b in s["occurrences"]]
     for m in verse_library.find_pasurams(norm_transcript):
@@ -203,7 +197,7 @@ def _verify_with_library(norm_transcript: str, shlokas: list) -> list:
         print(f"  pasuram found by library (missed by LLM): #{m['number']} score {m['score']}: {text[:40]!r}")
         shlokas.append({
             "language": "Tamil", "llm_language": None, "script_certain": True, "type": "Paasuram",
-            "text": text, "original": verse_library.original_line(m), "reference": verse_library.reference(m),
+            "text": text, "original": "", "reference": verse_library.reference(m),
             "confidence": m["score"] / 100, "verified": True, "found_by": "library",
             "start_index": spans[0][0], "end_index": spans[0][1], "occurrences": [list(sp) for sp in spans],
         })
@@ -212,14 +206,8 @@ def _verify_with_library(norm_transcript: str, shlokas: list) -> list:
 
 
 def _native_tamil_candidates(norm_transcript: str, taken: list) -> list:
-    """Spoken Tamil that the ASR wrote in real Tamil script, not spelled out
-    phonetically in Telugu, never matches what the LLM prompt above assumes
-    ("both are written in Telugu script here") — so a genuine pasuram can sit
-    in the transcript, correctly transcribed, and simply never get looked at.
-    Catching it needs no model: a long run of real Tamil Unicode already IS
-    the verse. We only verify it (a Divya Prabandham match when there is one)
-    and give it a Telugu reading line — the same courtesy every other verse
-    in these notes gets."""
+    """Spoken Tamil that the ASR wrote in real Tamil script, converted to Telugu
+    script so the entire notes remain in Telugu without Tamil script in between."""
     taken = list(taken)
     out = []
     for m in re.finditer(r'[஀-௿][஀-௿\s.,?!।॥]*[஀-௿]', norm_transcript):
@@ -231,10 +219,11 @@ def _native_tamil_candidates(norm_transcript: str, taken: list) -> list:
         if not spans:
             continue
         lib = verse_library.match_verse(text)
+        telugu_text = transliterate_to_telugu(text, source="tamil")
         out.append({
             "language": "Tamil", "llm_language": None, "script_certain": True, "type": "Paasuram",
-            "text": text,
-            "original": transliterate_to_telugu(text, source="tamil"),
+            "text": telugu_text or text,
+            "original": "",
             "reference": verse_library.reference(lib) if lib else None,
             "confidence": max(0.95, lib["score"] / 100) if lib else 0.95,
             "verified": True, "found_by": "native_script",

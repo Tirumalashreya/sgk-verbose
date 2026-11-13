@@ -3,13 +3,15 @@ from agents.formatting_agent import format_notes
 from agents.validation_agent import validate, _strip_markup
 from agents.verbatim import normalize_ws
 
-def test_tamil_terms_not_tagged_as_inline_brackets():
-    # Tamil terms in brackets are not required by user; they must remain natural Telugu
+def test_vaishnava_terms_tagged_for_highlighting_without_brackets():
+    # Vaishnava terms are tagged for inline highlighting in pure Telugu, without native brackets
     transcript = "స్వామి వారు ఈ రోజు అడియేన్ అని చెప్పారు మరియు నమ్మాళ్వార్ తిరువడిగళే శరణం అన్నారు."
     norm = normalize_ws(transcript)
     inline = detect_inline_terms(norm, existing_shlokas=[])
-    # No Tamil terms should be tagged with brackets
-    assert not any(t.get("language") == "Tamil" for t in inline)
+    # Both Tamil-origin and Sanskrit terms are detected for highlighting
+    assert any(t["text"] == "నమ్మాళ్వార్" for t in inline)
+    # Original is empty (no brackets attached)
+    assert all(t["original"] == "" for t in inline)
 
 def test_inline_sanskrit_terms_detection():
     transcript = "విశిష్టాద్వైతం సిద్ధాంతంలో పరమాత్మ జీవాత్మ సంబంధం గురించి శ్రీభాష్యం చెబుతుంది."
@@ -18,7 +20,7 @@ def test_inline_sanskrit_terms_detection():
     inline = detect_inline_terms(norm, existing_shlokas=[])
     bhashyam = next((t for t in inline if t["text"] == "శ్రీభాష్యం"), None)
     assert bhashyam is not None
-    assert bhashyam["original"] == "श्रीभाष्यम्"
+    assert bhashyam["original"] == ""
     assert bhashyam["is_inline"] is True
     assert bhashyam["language"] == "Sanskrit"
 
@@ -31,7 +33,8 @@ def test_formatting_keeps_inline_terms_inside_sentence():
     
     # Must be on a single line with inline markup, NOT split across multiple lines
     assert '\n' not in notes
-    assert '**"శ్రీభాష్యం"** (श्रीभाष्यम्)' in notes
+    assert '**"శ్రీభాష్యం"**' in notes
+    assert '(श्रीभाष्यम्)' not in notes
     
     # Stripping markup must equal the exact original transcript
     assert _strip_markup(notes) == norm

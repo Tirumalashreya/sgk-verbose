@@ -230,12 +230,23 @@ def _strip_next_para(text: str) -> str:
 
 
 def _shloka_line(s: dict) -> str:
-    line = f'**"{s["text"]}"**'
-    orig = s.get("original")
-    # Omit Tamil script in brackets per user requirement (Telugu audience does not require Tamil script)
-    if orig and not any('\u0b80' <= ch <= '\u0bff' for ch in orig):
-        line += f' ({orig})'
-    return line
+    text = s.get("text", "")
+    # Ensure transliteration to Telugu if raw Devanagari or Tamil script is present
+    if any('\u0900' <= ch <= '\u097f' for ch in text):
+        try:
+            from agents.verbatim import devanagari_to_telugu
+            text = devanagari_to_telugu(text) or text
+        except Exception:
+            pass
+    elif any('\u0b80' <= ch <= '\u0bff' for ch in text):
+        try:
+            from agents.verbatim import tamil_to_telugu
+            text = tamil_to_telugu(text) or text
+        except Exception:
+            pass
+    # Sanskrit and Tamil script in brackets are omitted per user requirement.
+    # Highlight the shloka / term in pure Telugu script only.
+    return f'**"{text}"**'
 
 
 INLINE_WORD_LIMIT = 2   # a verse this short (a name, a single phrase) reads better folded

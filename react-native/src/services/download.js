@@ -13,7 +13,7 @@ const isTelugu = (s) => /[ఀ-౿]/.test(s || '');
 const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
 const SHLOKA_MARK = /\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?/g;
 
-const stripTamilBrackets = (s) => (s || '').replace(/\s*\([஀-௿\s·\d-]+\)/g, '');
+const stripUnwantedBrackets = (s) => (s || '').replace(/\s*\([^)]*[\u0900-\u097f\u0b80-\u0bff][^)]*\)/g, '');
 
 function teluguFirst(text, original) {
   let primary = text;
@@ -22,7 +22,7 @@ function teluguFirst(text, original) {
     primary = original;
     bracket = text;
   }
-  if (/[஀-௿]/.test(bracket)) {
+  if (/[஀-௿\u0900-\u097f]/.test(bracket)) {
     bracket = '';
   }
   return { primary, bracket };
@@ -51,19 +51,18 @@ function buildHTML(session, forPrint = false, titleOverride) {
     if (!t) { paraIndex += 1; paraStarted = false; return '<br/>'; }
     const whole = t.match(SHLOKA_LINE);
     if (whole) {
-      const orig = whole[2] && !/[஀-௿]/.test(whole[2]) ? whole[2] : '';
-      return `${headingHTML()}<p class="shloka-text"><strong>"${esc(whole[1])}"</strong>${orig ? `<br/><span class="shloka-original">${esc(orig)}</span>` : ''}</p>`;
+      return `${headingHTML()}<p class="shloka-text"><strong>"${esc(whole[1])}"</strong></p>`;
     }
     const inline = [...t.matchAll(SHLOKA_MARK)];
-    if (!inline.length) return `${headingHTML()}<p>${esc(stripTamilBrackets(t))}</p>`;
+    if (!inline.length) return `${headingHTML()}<p>${esc(stripUnwantedBrackets(t))}</p>`;
     let html = '', last = 0;
     for (const m of inline) {
-      html += esc(stripTamilBrackets(t.slice(last, m.index)));
+      html += esc(stripUnwantedBrackets(t.slice(last, m.index)));
       const { primary, bracket } = teluguFirst(m[1], m[2]);
       html += `<span class="verse-inline">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
       last = m.index + m[0].length;
     }
-    html += esc(stripTamilBrackets(t.slice(last)));
+    html += esc(stripUnwantedBrackets(t.slice(last)));
     return `${headingHTML()}<p>${html}</p>`;
   }).join('');
 

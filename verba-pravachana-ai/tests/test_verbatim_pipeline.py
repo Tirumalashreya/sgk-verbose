@@ -59,13 +59,13 @@ def test_accepts_verbatim_verse_and_records_every_occurrence(monkeypatch):
     assert norm[s["start_index"]:s["end_index"]] == SANSKRIT
 
 
-def test_sanskrit_gets_devanagari_tamil_gets_no_original(monkeypatch):
+def test_sanskrit_and_tamil_get_no_native_brackets(monkeypatch):
     found = _detect(monkeypatch, _transcript(), [
         {"language": "Sanskrit", "text": SANSKRIT, "confidence": 0.9},
         {"language": "Tamil", "text": TAMIL, "confidence": 0.9},
     ])
     by_lang = {s["language"]: s for s in found}
-    assert by_lang["Sanskrit"]["original"].startswith("यदा यदा हि धर्मस्य")
+    assert by_lang["Sanskrit"]["original"] == ""
     assert by_lang["Tamil"]["original"] == ""
     assert by_lang["Tamil"]["type"] == "Paasuram"
 
@@ -98,7 +98,7 @@ def test_shlokas_on_own_line_at_every_spoken_position(detected):
     notes = format_notes(_transcript(), detected)
     shloka_lines = [l for l in notes.split("\n") if SHLOKA_LINE.match(l)]
     assert len(shloka_lines) == 3  # Sanskrit twice, Tamil once
-    assert shloka_lines[0] == f'**"{SANSKRIT}"** ({detected[0]["original"]})'
+    assert shloka_lines[0] == f'**"{SANSKRIT}"**'
     assert f'**"{TAMIL}"**' in shloka_lines
 
 
@@ -281,8 +281,8 @@ def test_formatter_widens_spans_even_for_unexpanded_input():
 def test_devanagari_verse_gets_telugu_second_line(monkeypatch):
     transcript = f"{FILLER} ॐ हरये नमः। {FILLER}"
     found = _detect(monkeypatch, transcript, [{"language": "Sanskrit", "text": "ॐ हरये नमः।", "confidence": 0.9}])
-    assert found[0]["original"] == "ఓం హరయే నమః।"
-    assert '**"ॐ हरये नमः।"** (ఓం హరయే నమః।)' in format_notes(transcript, found).split("\n")
+    assert found[0]["original"] == ""
+    assert '**"ఓం హరయే నమః।"**' in format_notes(transcript, found).split("\n")
 
 
 # ── Groq key rotation ─────────────────────────────────────────────────────────

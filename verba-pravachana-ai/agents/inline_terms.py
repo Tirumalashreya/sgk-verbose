@@ -255,16 +255,13 @@ def detect_inline_terms(norm_transcript: str, existing_shlokas: list) -> list[di
 
             # Determine script language
             is_sanskrit = any('\u0900' <= ch <= '\u097f' for ch in orig)
-            if not is_sanskrit:
-                # Tamil script in brackets is not required by user; leave as natural Telugu text
-                continue
-            lang = "Sanskrit"
+            lang = "Sanskrit" if is_sanskrit else "Tamil"
 
             found.append({
                 "language": lang,
                 "type": "InlineTerm",
                 "text": norm_transcript[start:end],  # 100% verbatim from transcript!
-                "original": orig,
+                "original": "",  # No Tamil or Sanskrit script in brackets per user requirement
                 "is_inline": True,
                 "confidence": 1.0,
                 "verified": True,

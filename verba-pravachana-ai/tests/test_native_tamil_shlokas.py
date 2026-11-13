@@ -34,10 +34,9 @@ def test_finds_a_native_tamil_verse_with_no_prior_detections():
     found = sda._native_tamil_candidates(norm, [])
     assert len(found) == 1
     s = found[0]
-    assert s["text"] == TAMIL_VERSE.strip(" .") or TAMIL_VERSE.strip() in s["text"]
+    assert _mostly_telugu(s["text"])
     assert s["language"] == "Tamil" and s["type"] == "Paasuram"
-    assert s["original"]  # the Telugu reading line is filled in
-    assert _mostly_telugu(s["original"])
+    assert s["original"] == ""  # No native script in brackets
 
 
 def test_ignores_a_short_tamil_name_not_a_recited_verse():
