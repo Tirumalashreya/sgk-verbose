@@ -9,7 +9,7 @@ import { Screen, Enter, IconButton, Chip, Button, ReadingText, VerseBlock, sessi
 import TeluguKeypad from '../ui/TeluguKeypad';
 import { getSessions, getTimestampedNotes, updateNotes, updateSessionTitle, downloadSessionAudio } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
-import { notify } from '../services/platform';
+import { isWeb, notify } from '../services/platform';
 
 const isTe = (s) => /[ఀ-౿]/.test(s || '');
 
@@ -78,7 +78,79 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   const [romanInput, setRomanInput] = useState('');
   const [exportKind, setExportKind] = useState(null);   // 'pdf' | 'doc' | null (dialog closed)
 
+  const undoStackRef = useRef([]);
+  const redoStackRef = useRef([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const draftRef = useRef(draft);
+  const selectionRef = useRef(selection);
+  const typingTimerRef = useRef(null);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
+
+  const updateUndoStatus = () => {
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+  };
+
+  const recordUndoSnapshot = (customText, customSel) => {
+    const snapText = customText !== undefined ? customText : draftRef.current;
+    const snapSel = customSel !== undefined ? customSel : selectionRef.current;
+    undoStackRef.current.push({ text: snapText, selection: snapSel });
+    if (undoStackRef.current.length > 60) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    updateUndoStatus();
+  };
+
+  const undo = () => {
+    if (undoStackRef.current.length === 0) return;
+    const prev = undoStackRef.current.pop();
+    redoStackRef.current.push({ text: draftRef.current, selection: selectionRef.current });
+    updateUndoStatus();
+    setDraft(prev.text);
+    if (prev.selection) setSelection(prev.selection);
+  };
+
+  const redo = () => {
+    if (redoStackRef.current.length === 0) return;
+    const next = redoStackRef.current.pop();
+    undoStackRef.current.push({ text: draftRef.current, selection: selectionRef.current });
+    updateUndoStatus();
+    setDraft(next.text);
+    if (next.selection) setSelection(next.selection);
+  };
+
+  useEffect(() => {
+    if (!editing || !isWeb) return;
+    const handler = (e) => {
+      const isZ = e.key === 'z' || e.key === 'Z';
+      const isY = e.key === 'y' || e.key === 'Y';
+      const isMeta = e.ctrlKey || e.metaKey;
+
+      if (isMeta && isZ) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      } else if (isMeta && isY) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [editing]);
+
   const insertKeypadChar = (char) => {
+    recordUndoSnapshot();
     const start = selection.start ?? draft.length;
     const end = selection.end ?? draft.length;
     const before = draft.slice(0, start);
@@ -90,6 +162,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   };
 
   const backspaceKeypad = () => {
+    recordUndoSnapshot();
     const start = selection.start ?? draft.length;
     const end = selection.end ?? draft.length;
     if (start !== end) {
@@ -106,6 +179,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   };
 
   const applyFormat = (type) => {
+    recordUndoSnapshot();
     const start = selection.start ?? draft.length;
     const end = selection.end ?? draft.length;
     const isSelected = start !== end;
@@ -202,6 +276,14 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   }, [romanInput]);
 
   const onDraftChange = (text) => {
+    if (!typingTimerRef.current) {
+      recordUndoSnapshot();
+    }
+    clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => {
+      typingTimerRef.current = null;
+    }, 800);
+
     if (!teluguAidOn) {
       setDraft(text);
       return;
@@ -291,6 +373,9 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   const selectTab = (id) => { setTab(id); if (id === 'timestamps') loadTimestamps(); };
 
   const startEdit = () => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    updateUndoStatus();
     setDraft(session.notes || session.transcript || '');
     setTitleDraft(session.title || '');
     setEditing(true);
@@ -330,6 +415,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   // word after word in the aid reads naturally into the real notes.
   const insertTelugu = () => {
     if (!teluguPreview) return;
+    recordUndoSnapshot();
     const insert = teluguPreview + ' ';
     const { start, end } = selection;
     const next = draft.slice(0, start) + insert + draft.slice(end);
@@ -529,7 +615,30 @@ export default function ReadingScreen({ go, back, t, session: given }) {
           <View style={{ gap: S.m }}>
             {/* Word Formatting Toolbar */}
             <View style={[st.formatBar, { backgroundColor: c.raised, borderColor: c.brass }]}>
-              <Text style={[T.caption, { color: c.muted, marginRight: 2, alignSelf: 'center' }]}>Format:</Text>
+              <Pressable
+                onPress={undo}
+                disabled={!canUndo}
+                style={[st.formatBtn, { borderColor: c.line, backgroundColor: c.surface, opacity: canUndo ? 1 : 0.4 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Undo (Ctrl+Z)"
+              >
+                <Text style={{ fontSize: 13 }}>↩️</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: canUndo ? c.ink : c.muted }}>Undo</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={redo}
+                disabled={!canRedo}
+                style={[st.formatBtn, { borderColor: c.line, backgroundColor: c.surface, opacity: canRedo ? 1 : 0.4 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Redo (Ctrl+Y)"
+              >
+                <Text style={{ fontSize: 13 }}>↪️</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: canRedo ? c.ink : c.muted }}>Redo</Text>
+              </Pressable>
+
+              <View style={{ width: 1, height: 18, backgroundColor: c.line, marginHorizontal: 2, alignSelf: 'center' }} />
+
               <Pressable
                 onPress={() => applyFormat('bold')}
                 style={[st.formatBtn, { borderColor: c.line, backgroundColor: c.surface }]}
