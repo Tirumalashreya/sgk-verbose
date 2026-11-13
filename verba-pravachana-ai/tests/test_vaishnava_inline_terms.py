@@ -1,4 +1,3 @@
-import pytest
 from agents.inline_terms import detect_inline_terms
 from agents.formatting_agent import format_notes
 from agents.validation_agent import validate, _strip_markup
