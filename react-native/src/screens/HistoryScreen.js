@@ -72,7 +72,7 @@ export default function HistoryScreen({ go, t, lang }) {
     setMerging(true);
     try {
       await mergeSessions(selectedMergeIds);
-      notify(t('history'), `${selectedMergeIds.length} రికార్డింగ్‌లు కలపబడుతున్నాయి...`);
+      notify(t('history'), `Merging ${selectedMergeIds.length} recordings...`);
       cancelMergeMode();
       await load();
     } catch (e) {
@@ -106,7 +106,7 @@ export default function HistoryScreen({ go, t, lang }) {
               accessibilityRole="button"
             >
               <Icon name="merge" size={16} color={c.brass} />
-              <Text style={{ fontFamily: F.readMed, fontSize: 13, color: c.brass }}>కలపండి (Merge)</Text>
+              <Text style={{ fontFamily: F.readMed, fontSize: 13, color: c.brass, fontWeight: '700' }}>Merge</Text>
             </Pressable>
           )}
         </View>
@@ -117,16 +117,16 @@ export default function HistoryScreen({ go, t, lang }) {
         <View style={[st.mergeBanner, { backgroundColor: c.raised, borderColor: c.brass }]}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontFamily: F.readBold, fontSize: 15, color: c.brass }}>
-              కలపడానికి ఫైళ్లను ఎంచుకోండి (క్రమం సంఖ్యతో):
+              Select recordings to merge (in sequence):
             </Text>
             <Text style={{ fontSize: 12.5, color: c.muted, marginTop: 2 }}>
               {selectedMergeIds.length === 0
-                ? 'మొదటి ఫైల్‌ను నొక్కండి (దానికి నెం. 1 వస్తుంది)'
-                : `${selectedMergeIds.length} ఫైళ్లు ఎంచుకోబడ్డాయి (క్రమం: 1 నుండి ${selectedMergeIds.length})`}
+                ? 'Tap recording to select (stamped with #1, #2...)'
+                : `${selectedMergeIds.length} recordings selected (Merge Order: 1 to ${selectedMergeIds.length})`}
             </Text>
           </View>
           <Pressable onPress={cancelMergeMode} style={{ padding: 6 }}>
-            <Text style={{ color: c.kumkumText, fontWeight: '700', fontSize: 13 }}>రద్దు (Cancel)</Text>
+            <Text style={{ color: c.kumkumText, fontWeight: '700', fontSize: 13 }}>Cancel</Text>
           </Pressable>
         </View>
       )}
@@ -198,18 +198,18 @@ export default function HistoryScreen({ go, t, lang }) {
         <View style={[st.floatingBar, { backgroundColor: c.surface, borderColor: c.brass, shadowColor: '#000' }]}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontFamily: F.readBold, fontSize: 14, color: c.ink }}>
-              ఎంచుకున్నవి: {selectedMergeIds.length} ఫైళ్లు
+              Selected: {selectedMergeIds.length} recordings
             </Text>
             <Text style={{ fontSize: 12, color: c.muted }}>
-              {selectedMergeIds.length >= 2 ? 'క్రమం ప్రకారం కలపడానికి సిద్ధం' : 'కనీసం 2 ఫైళ్లు ఎంచుకోండి'}
+              {selectedMergeIds.length >= 2 ? 'Ready to merge in order' : 'Select at least 2 recordings'}
             </Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-            <Button c={c} variant="quiet" label="రద్దు" onPress={cancelMergeMode} />
+            <Button c={c} variant="quiet" label="Cancel" onPress={cancelMergeMode} />
             <Button
               c={c}
               variant="brass"
-              label={`కలపండి (${selectedMergeIds.length})`}
+              label={`Merge (${selectedMergeIds.length})`}
               onPress={() => setShowConfirmModal(true)}
               disabled={selectedMergeIds.length < 2 || merging}
             />
@@ -232,8 +232,8 @@ export default function HistoryScreen({ go, t, lang }) {
             >
               <Icon name="merge" size={20} color={c.brass} />
               <View style={{ flex: 1 }}>
-                <Text style={[st.sheetItemText, { color: c.ink, fontFamily: F.readMed }]}>ఇతర రికార్డింగ్‌లతో కలపండి (Merge)</Text>
-                <Text style={{ fontSize: 12, color: c.muted }}>ఈ ఫైల్‌ను 1వ ఫైల్‌గా ఉంచి ఇతర ఫైళ్లను కలపండి</Text>
+                <Text style={[st.sheetItemText, { color: c.ink, fontFamily: F.readMed }]}>Merge with other recordings</Text>
+                <Text style={{ fontSize: 12, color: c.muted }}>Set as #1 and select other recordings to merge</Text>
               </View>
             </Pressable>
 
@@ -281,10 +281,10 @@ export default function HistoryScreen({ go, t, lang }) {
         <View style={st.modalOverlay}>
           <View style={[st.confirmCard, { backgroundColor: c.surface, borderColor: c.brass }]}>
             <Text style={{ fontFamily: F.readBold, fontSize: 18, color: c.brass, marginBottom: 4 }}>
-              రికార్డింగ్‌లను కలపండి ({selectedMergeIds.length} ఫైళ్లు)
+              Merge Recordings ({selectedMergeIds.length} files)
             </Text>
             <Text style={{ fontSize: 13, color: c.muted, marginBottom: S.m }}>
-              మీరు ఎంచుకున్న ఈ క్రింది క్రమంలో నోట్స్ మరియు ఆడియో ఒకటిగా కలపబడతాయి:
+              Notes and audio will be joined in your selected sequence:
             </Text>
 
             <ScrollView style={{ maxHeight: 220, marginBottom: S.m }}>
@@ -307,13 +307,13 @@ export default function HistoryScreen({ go, t, lang }) {
               <View style={{ alignItems: 'center', paddingVertical: S.m }}>
                 <ActivityIndicator color={c.brass} size="large" />
                 <Text style={{ marginTop: S.s, fontFamily: F.readMed, fontSize: 14, color: c.brass }}>
-                  రికార్డింగ్‌లను కలుపుతోంది... దయచేసి వేచి ఉండండి
+                  Merging recordings... Please wait
                 </Text>
               </View>
             ) : (
               <View style={{ flexDirection: 'row', gap: 8 }}>
-                <Button c={c} variant="quiet" label="వెనుకకు" onPress={() => setShowConfirmModal(false)} style={{ flex: 1 }} />
-                <Button c={c} variant="brass" label="ఖరారు చేయండి (Merge)" onPress={executeMerge} style={{ flex: 1 }} />
+                <Button c={c} variant="quiet" label="Cancel" onPress={() => setShowConfirmModal(false)} style={{ flex: 1 }} />
+                <Button c={c} variant="brass" label="Merge" onPress={executeMerge} style={{ flex: 1 }} />
               </View>
             )}
           </View>
