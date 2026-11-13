@@ -176,9 +176,9 @@ def test_validation_flags_unverified_shloka():
 # ── term fixes ────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("text, expected", [
-    ("పెరుమాల్ చెప్పారు", "పెరుమాళ్ళ (பெருமாள்) చెప్పారు"),
-    ("తొండలడి పొడి ఆడు రోజు", "తొండరడిప్పొడి ఆళ్వార్ (தொண்டரடிப்பொடி ஆழ்வார்) రోజు"),
-    ("ఆడు సేవ", "ఆళ్వార్ (ஆழ்வார்) సేవ"),
+    ("పెరుమాల్ చెప్పారు", "పెరుమాళ్ళ చెప్పారు"),
+    ("తొండలడి పొడి ఆడు రోజు", "తొండరడిప్పొడి ఆళ్వార్ రోజు"),
+    ("ఆడు సేవ", "ఆళ్వార్ సేవ"),
     # Must not fire inside longer words (\b used to split at vowel signs)
     ("పెరుమాలు వచ్చారు", "పెరుమాలు వచ్చారు"),
     ("పెరియవార్చాన్ పిల్లై", "పెరియవార్చాన్ పిల్లై"),
@@ -497,7 +497,7 @@ def test_shloka_step_adds_missed_pasuram_and_keeps_notes_verbatim(monkeypatch, t
     assert refs == {1073: "library", 3523: "llm"}
     assert all(s["language"] == "Tamil" for s in found)
     notes = format_notes(transcript, found)
-    assert "சித்திரத் தேர் வலவா" in notes
+    assert "சித்திரத் தேர் வலவா" not in notes  # Tamil script in brackets is omitted
     assert validate(transcript, notes, found) == []
 
 

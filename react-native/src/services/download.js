@@ -13,10 +13,19 @@ const isTelugu = (s) => /[ఀ-౿]/.test(s || '');
 const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
 const SHLOKA_MARK = /\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?/g;
 
+const stripTamilBrackets = (s) => (s || '').replace(/\s*\([஀-௿\s·\d-]+\)/g, '');
+
 function teluguFirst(text, original) {
-  if (isTelugu(text)) return { primary: text, bracket: original || '' };
-  if (isTelugu(original)) return { primary: original, bracket: text };
-  return { primary: text, bracket: '' };
+  let primary = text;
+  let bracket = original || '';
+  if (isTelugu(original) && !isTelugu(text)) {
+    primary = original;
+    bracket = text;
+  }
+  if (/[஀-௿]/.test(bracket)) {
+    bracket = '';
+  }
+  return { primary, bracket };
 }
 
 function buildHTML(session, forPrint = false, titleOverride) {
@@ -41,17 +50,20 @@ function buildHTML(session, forPrint = false, titleOverride) {
     const t = line.trim();
     if (!t) { paraIndex += 1; paraStarted = false; return '<br/>'; }
     const whole = t.match(SHLOKA_LINE);
-    if (whole) return `${headingHTML()}<p class="shloka-text"><strong>"${esc(whole[1])}"</strong>${whole[2] ? `<br/><span class="shloka-original">${esc(whole[2])}</span>` : ''}</p>`;
+    if (whole) {
+      const orig = whole[2] && !/[஀-௿]/.test(whole[2]) ? whole[2] : '';
+      return `${headingHTML()}<p class="shloka-text"><strong>"${esc(whole[1])}"</strong>${orig ? `<br/><span class="shloka-original">${esc(orig)}</span>` : ''}</p>`;
+    }
     const inline = [...t.matchAll(SHLOKA_MARK)];
-    if (!inline.length) return `${headingHTML()}<p>${esc(t)}</p>`;
+    if (!inline.length) return `${headingHTML()}<p>${esc(stripTamilBrackets(t))}</p>`;
     let html = '', last = 0;
     for (const m of inline) {
-      html += esc(t.slice(last, m.index));
+      html += esc(stripTamilBrackets(t.slice(last, m.index)));
       const { primary, bracket } = teluguFirst(m[1], m[2]);
       html += `<span class="verse-inline">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
       last = m.index + m[0].length;
     }
-    html += esc(t.slice(last));
+    html += esc(stripTamilBrackets(t.slice(last)));
     return `${headingHTML()}<p>${html}</p>`;
   }).join('');
 

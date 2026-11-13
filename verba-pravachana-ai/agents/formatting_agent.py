@@ -231,8 +231,10 @@ def _strip_next_para(text: str) -> str:
 
 def _shloka_line(s: dict) -> str:
     line = f'**"{s["text"]}"**'
-    if s.get("original"):
-        line += f' ({s["original"]})'
+    orig = s.get("original")
+    # Omit Tamil script in brackets per user requirement (Telugu audience does not require Tamil script)
+    if orig and not any('\u0b80' <= ch <= '\u0bff' for ch in orig):
+        line += f' ({orig})'
     return line
 
 
