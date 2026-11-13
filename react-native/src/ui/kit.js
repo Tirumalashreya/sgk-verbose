@@ -217,8 +217,8 @@ export function VerseBlock({ c, text, original, reference, type }) {
  *  A verse long enough to stand on its own line becomes its own boxed block
  *  (SHLOKA_LINE); a one- or two-word verse sits inline inside its sentence
  *  instead (SHLOKA_MARK — the same markup, just not alone on its line). */
-const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
-const SHLOKA_MARK = /\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?/g;
+const SHLOKA_LINE = /^\*\*"?([^"*]+?)"?\*\*(?:\s*\(([^)]*)\))?$/;
+const SHLOKA_MARK = /\*\*"?([^"*]+?)"?\*\*(?:\s*\(([^)]*)\))?/g;
 
 // Common recurring discourse words that must NEVER be highlighted
 const EXCLUDED_RECURRING_TERMS = new Set([

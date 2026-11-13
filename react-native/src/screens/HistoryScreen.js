@@ -97,7 +97,9 @@ export default function HistoryScreen({ go, t, lang }) {
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View>
             <Text style={[lang === 'te' ? T.displayTe : T.display, { color: c.ink }]}>{t('history')}</Text>
-            <Text style={[T.body, { color: c.muted, marginTop: 4 }]}>{sessions.length} రికార్డింగ్‌లు</Text>
+            <Text style={[T.body, { color: c.muted, marginTop: 4 }]}>
+              {sessions.length} {sessions.length === 1 ? 'recording' : 'recordings'}
+            </Text>
           </View>
           {!mergeMode && sessions.length >= 2 && (
             <Pressable
@@ -247,8 +249,8 @@ export default function HistoryScreen({ go, t, lang }) {
             >
               <Icon name="share" size={20} color={c.brass} />
               <View style={{ flex: 1 }}>
-                <Text style={[st.sheetItemText, { color: c.ink, fontFamily: F.readMed }]}>Word (.doc) డౌన్‌లోడ్</Text>
-                <Text style={{ fontSize: 12, color: c.muted }}>హైలైట్ చేసిన పదాలతో నేరుగా Word లో ఎడిట్ చేయండి</Text>
+                <Text style={[st.sheetItemText, { color: c.ink, fontFamily: F.readMed }]}>Download Word (.doc)</Text>
+                <Text style={{ fontSize: 12, color: c.muted }}>Open directly in Microsoft Word with bold styling</Text>
               </View>
             </Pressable>
 
@@ -262,7 +264,7 @@ export default function HistoryScreen({ go, t, lang }) {
             >
               <Icon name="trash" size={20} color={c.kumkumText} />
               <View style={{ flex: 1 }}>
-                <Text style={[st.sheetItemText, { color: c.kumkumText, fontFamily: F.readMed }]}>తొలగించండి (Delete)</Text>
+                <Text style={[st.sheetItemText, { color: c.kumkumText, fontFamily: F.readMed }]}>Delete recording</Text>
               </View>
             </Pressable>
 
@@ -270,7 +272,7 @@ export default function HistoryScreen({ go, t, lang }) {
               style={[st.sheetCancelBtn, { borderColor: c.line }]}
               onPress={() => setMenuSession(null)}
             >
-              <Text style={{ color: c.muted, fontWeight: '700', fontSize: 14 }}>మూసివేయి (Close)</Text>
+              <Text style={{ color: c.muted, fontWeight: '700', fontSize: 14 }}>Close</Text>
             </Pressable>
           </Pressable>
         </Pressable>

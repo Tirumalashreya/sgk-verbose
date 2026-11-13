@@ -105,6 +105,97 @@ export default function ReadingScreen({ go, back, t, session: given }) {
     setSelection({ start: start - 1, end: start - 1 });
   };
 
+  const applyFormat = (type) => {
+    const start = selection.start ?? draft.length;
+    const end = selection.end ?? draft.length;
+    const isSelected = start !== end;
+    const selText = draft.slice(start, end);
+
+    let next = draft;
+    let newStart = start;
+    let newEnd = end;
+
+    if (type === 'bold') {
+      if (isSelected) {
+        if (selText.startsWith('**') && selText.endsWith('**') && selText.length >= 4) {
+          const unwrapped = selText.slice(2, -2);
+          next = draft.slice(0, start) + unwrapped + draft.slice(end);
+          newEnd = start + unwrapped.length;
+        } else if (start >= 2 && draft.slice(start - 2, start) === '**' && draft.slice(end, end + 2) === '**') {
+          next = draft.slice(0, start - 2) + selText + draft.slice(end + 2);
+          newStart = start - 2;
+          newEnd = newStart + selText.length;
+        } else {
+          const wrapped = `**${selText}**`;
+          next = draft.slice(0, start) + wrapped + draft.slice(end);
+          newEnd = start + wrapped.length;
+        }
+      } else {
+        next = draft.slice(0, start) + '****' + draft.slice(end);
+        newStart = start + 2;
+        newEnd = start + 2;
+      }
+    } else if (type === 'highlight') {
+      if (isSelected) {
+        if (selText.startsWith('**"') && selText.endsWith('"**') && selText.length >= 6) {
+          const unwrapped = selText.slice(3, -3);
+          next = draft.slice(0, start) + unwrapped + draft.slice(end);
+          newEnd = start + unwrapped.length;
+        } else if (start >= 3 && draft.slice(start - 3, start) === '**"' && draft.slice(end, end + 3) === '"**') {
+          next = draft.slice(0, start - 3) + selText + draft.slice(end + 3);
+          newStart = start - 3;
+          newEnd = newStart + selText.length;
+        } else {
+          const clean = selText.replace(/^"|"$/g, '');
+          const wrapped = `**"${clean}"**`;
+          next = draft.slice(0, start) + wrapped + draft.slice(end);
+          newEnd = start + wrapped.length;
+        }
+      } else {
+        next = draft.slice(0, start) + '**""**' + draft.slice(end);
+        newStart = start + 3;
+        newEnd = start + 3;
+      }
+    } else if (type === 'shloka') {
+      if (isSelected) {
+        const clean = selText.replace(/^\*\*"?|"?\*\*$/g, '').trim();
+        const wrapped = `\n\n**"${clean}"**\n\n`;
+        next = draft.slice(0, start) + wrapped + draft.slice(end);
+        newEnd = start + wrapped.length;
+      } else {
+        const wrapped = '\n\n**""**\n\n';
+        next = draft.slice(0, start) + wrapped + draft.slice(end);
+        newStart = start + 4;
+        newEnd = start + 4;
+      }
+    } else if (type === 'quote') {
+      if (isSelected) {
+        if (selText.startsWith('"') && selText.endsWith('"') && selText.length >= 2) {
+          const unwrapped = selText.slice(1, -1);
+          next = draft.slice(0, start) + unwrapped + draft.slice(end);
+          newEnd = start + unwrapped.length;
+        } else {
+          const wrapped = `"${selText}"`;
+          next = draft.slice(0, start) + wrapped + draft.slice(end);
+          newEnd = start + wrapped.length;
+        }
+      } else {
+        next = draft.slice(0, start) + '""' + draft.slice(end);
+        newStart = start + 1;
+        newEnd = start + 1;
+      }
+    } else if (type === 'clear') {
+      if (isSelected) {
+        const cleared = selText.replace(/\*\*/g, '').replace(/^"|"$/g, '');
+        next = draft.slice(0, start) + cleared + draft.slice(end);
+        newEnd = start + cleared.length;
+      }
+    }
+
+    setDraft(next);
+    setSelection({ start: newStart, end: newEnd });
+  };
+
   const teluguPreview = useMemo(() => {
     if (!romanInput.trim()) return '';
     return transliterateWord(romanInput.trim());
@@ -294,6 +385,16 @@ export default function ReadingScreen({ go, back, t, session: given }) {
               <Text style={[T.label, { color: c.brass }]}>{t('edit')}</Text>
             </Pressable>
           )}
+          {editing && (
+            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+              <Pressable onPress={cancelEdit} style={[st.export, { paddingHorizontal: 8 }]} disabled={saving}>
+                <Text style={[T.label, { color: c.muted }]}>{t('editCancel')}</Text>
+              </Pressable>
+              <Pressable onPress={saveEdit} style={[st.export, { paddingHorizontal: 12, backgroundColor: c.brass, borderRadius: R.control }]} disabled={saving}>
+                <Text style={[T.label, { color: '#fff', fontWeight: '700' }]}>{saving ? 'Saving…' : t('editSave')}</Text>
+              </Pressable>
+            </View>
+          )}
           {!editing && <>
             <Pressable onPress={() => exportAs('pdf')} accessibilityRole="button" accessibilityLabel={`${t('exportPdf')} export`} style={st.export}>
               <Text style={[T.label, { color: c.brass }]}>{t('exportPdf')}</Text>
@@ -426,6 +527,60 @@ export default function ReadingScreen({ go, back, t, session: given }) {
       <View style={{ marginTop: S.xl }}>
         {tab === 'notes' && editing && (
           <View style={{ gap: S.m }}>
+            {/* Word Formatting Toolbar */}
+            <View style={[st.formatBar, { backgroundColor: c.raised, borderColor: c.brass }]}>
+              <Text style={[T.caption, { color: c.muted, marginRight: 2, alignSelf: 'center' }]}>Format:</Text>
+              <Pressable
+                onPress={() => applyFormat('bold')}
+                style={[st.formatBtn, { borderColor: c.line, backgroundColor: c.surface }]}
+                accessibilityRole="button"
+                accessibilityLabel="Bold"
+              >
+                <Text style={{ fontWeight: '900', fontSize: 14, color: c.ink, fontFamily: F.readBold }}>B</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: c.ink }}>Bold</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => applyFormat('highlight')}
+                style={[st.formatBtn, { borderColor: c.brass, backgroundColor: '#FFF9E6' }]}
+                accessibilityRole="button"
+                accessibilityLabel="Highlight"
+              >
+                <Text style={{ fontSize: 12 }}>🖍️</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: c.brass }}>Highlight</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => applyFormat('shloka')}
+                style={[st.formatBtn, { borderColor: c.line, backgroundColor: c.surface }]}
+                accessibilityRole="button"
+                accessibilityLabel="Verse"
+              >
+                <Text style={{ fontSize: 12 }}>📜</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: c.ink }}>Verse</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => applyFormat('quote')}
+                style={[st.formatBtn, { borderColor: c.line, backgroundColor: c.surface }]}
+                accessibilityRole="button"
+                accessibilityLabel="Quote"
+              >
+                <Text style={{ fontSize: 12 }}>“ ”</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: c.ink }}>Quote</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => applyFormat('clear')}
+                style={[st.formatBtn, { borderColor: c.line, backgroundColor: c.surface }]}
+                accessibilityRole="button"
+                accessibilityLabel="Clear formatting"
+              >
+                <Text style={{ fontSize: 12 }}>🧹</Text>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: c.muted }}>Clear</Text>
+              </Pressable>
+            </View>
+
             <TextInput
               value={draft}
               onChangeText={onDraftChange}
@@ -450,7 +605,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
               <Pressable onPress={() => setShowKeypad((v) => !v)} accessibilityRole="button" accessibilityState={{ selected: showKeypad }}
                 style={[st.aidToggle, { borderColor: c.brass, backgroundColor: showKeypad ? c.brass : 'transparent', flex: 1, minWidth: 120, paddingVertical: 10 }]}>
                 <Text style={[T.label, { color: showKeypad ? c.onBrass : c.brass, textAlign: 'center' }]}>
-                  {showKeypad ? '✓ తెలుగు కీబోర్డ్' : '⌨️ తెలుగు కీబోర్డ్'}
+                  {showKeypad ? '✓ Telugu Keypad' : '⌨️ Telugu Keypad'}
                 </Text>
               </Pressable>
               <Pressable onPress={toggleVoice} accessibilityRole="button"
@@ -532,4 +687,6 @@ const st = StyleSheet.create({
   aidPanel: { borderWidth: 1, borderRadius: R.panel, padding: S.l, gap: S.s },
   aidInput: { borderWidth: 1, borderRadius: R.control, padding: S.m, fontSize: 16 },
   aidPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: S.m, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: S.m },
+  formatBar: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: R.control, padding: 6, flexWrap: 'wrap' },
+  formatBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderRadius: R.control, paddingHorizontal: 10, paddingVertical: 6 },
 });

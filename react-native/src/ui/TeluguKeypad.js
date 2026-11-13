@@ -25,9 +25,9 @@ const VOWELS = [
 ];
 
 const TABS = [
-  { id: 'signs', label: 'గుణింతాలు & వత్తులు' },
-  { id: 'consonants', label: 'హల్లులు (క-ఱ)' },
-  { id: 'vowels', label: 'అచ్చులు (అ-ఔ)' },
+  { id: 'signs', label: 'Matras & Signs' },
+  { id: 'consonants', label: 'Consonants' },
+  { id: 'vowels', label: 'Vowels' },
 ];
 
 export default function TeluguKeypad({ onInsert, onBackspace, onClose }) {
@@ -94,14 +94,14 @@ export default function TeluguKeypad({ onInsert, onBackspace, onClose }) {
           onPress={() => onInsert(' ')}
           style={[st.controlBtn, { flex: 2, backgroundColor: c.raised, borderColor: c.line }]}
         >
-          <Text style={[st.controlText, { color: c.ink }]}>స్పేస్ (Space)</Text>
+          <Text style={[st.controlText, { color: c.ink }]}>Space</Text>
         </Pressable>
         <Pressable
           onPress={onBackspace}
           style={[st.controlBtn, { flex: 1, backgroundColor: c.raised, borderColor: c.line }]}
           accessibilityLabel="Backspace"
         >
-          <Text style={[st.controlText, { color: c.kumkumText || c.ink, fontWeight: '700' }]}>⌫ డిలీట్</Text>
+          <Text style={[st.controlText, { color: c.kumkumText || c.ink, fontWeight: '700' }]}>⌫ Backspace</Text>
         </Pressable>
         {['.', ',', '?', '"'].map((p) => (
           <Pressable

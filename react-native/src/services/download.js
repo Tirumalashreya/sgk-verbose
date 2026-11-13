@@ -10,7 +10,7 @@ const isTelugu = (s) => /[ఀ-౿]/.test(s || '');
 // sit inline inside a sentence (SHLOKA_MARK, the same markup, unanchored) —
 // mirrors react-native/src/ui/kit.js's ReadingText, since both parse the
 // same notes text independently.
-const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
+const SHLOKA_LINE = /^\*\*"?([^"*]+?)"?\*\*(?:\s*\(([^)]*)\))?$/;
 // Match both **"word"** and **word** with optional brackets
 const SHLOKA_MARK = /\*\*"?([^"*]+?)"?\*\*(?:\s*\(([^)]*)\))?/g;
 
