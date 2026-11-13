@@ -489,11 +489,6 @@ export default function ReadingScreen({ go, back, t, session: given }) {
               <Button c={c} variant="quiet" label={t('editCancel')} onPress={cancelEdit} style={{ flex: 1 }} disabled={saving} />
               <Button c={c} variant="brass" label={saving ? t('editSaved') + '…' : t('editSave')} onPress={saveEdit} style={{ flex: 1 }} disabled={saving} />
             </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: S.xs }}>
-              <Pressable onPress={() => exportAs('doc')} accessibilityRole="button" style={[st.aidToggle, { borderColor: c.brass, paddingVertical: 8, paddingHorizontal: 16 }]}>
-                <Text style={[T.label, { color: c.brass, fontSize: 13 }]}>📄 Word (.doc) లో ఎడిట్ చేయడానికి డౌన్‌లోడ్</Text>
-              </Pressable>
-            </View>
           </View>
         )}
         {tab === 'notes' && !editing && (

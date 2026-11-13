@@ -44,7 +44,8 @@ function teluguFirst(text, original) {
   return { primary: stripStars(primary), bracket: stripStars(bracket) };
 }
 
-function buildHTML(session, forPrint = false, titleOverride) {
+function buildHTML(session, forPrint = false, titleOverride, format = (forPrint ? 'pdf' : 'doc')) {
+  const isDoc    = format === 'doc';
   const title    = esc(titleOverride || session.title || 'Pravachanam');
   const notes    = session.notes || session.transcript || '';   // the notes are the full verbatim transcript
   const headings = session.notes_headings || {};   // {paragraph index -> "మూలం N"}, keyed same as kit.js's ReadingText
@@ -71,7 +72,12 @@ function buildHTML(session, forPrint = false, titleOverride) {
         return `${headingHTML()}<p>${esc(stripStars(whole[1]))}</p>`;
       }
       const cleanVerse = stripStars(whole[1]);
-      return `${headingHTML()}<p class="shloka-text" style="background-color: #FFF9E6; border-left: 4px solid #E0843B; padding: 10px 14px; margin: 16px 0;"><span style="color: #8A1C36; font-size: 24px; font-weight: bold; background-color: #FFF2A8; mso-highlight: yellow;">"${esc(cleanVerse)}"</span></p>`;
+      if (isDoc) {
+        // Word export: clean black bold letters, no yellow highlighter
+        return `${headingHTML()}<p class="shloka-text" style="margin: 16px 0;"><span style="color: #000000; font-size: 24px; font-weight: bold;"><strong>"${esc(cleanVerse)}"</strong></span></p>`;
+      }
+      // PDF export: traditional brown bold with subtle background & border
+      return `${headingHTML()}<p class="shloka-text" style="background-color: #FFF9E6; border-left: 4px solid #E0843B; padding: 10px 14px; margin: 16px 0;"><span style="color: #8A1C36; font-size: 24px; font-weight: bold; background-color: #FFF2A8;">"${esc(cleanVerse)}"</span></p>`;
     }
     const inline = [...t.matchAll(SHLOKA_MARK)];
     if (!inline.length) return `${headingHTML()}<p>${esc(stripStars(stripUnwantedBrackets(t)))}</p>`;
@@ -82,7 +88,13 @@ function buildHTML(session, forPrint = false, titleOverride) {
         html += esc(stripStars(m[1]));
       } else {
         const { primary, bracket } = teluguFirst(m[1], m[2]);
-        html += `<span class="verse-inline" style="background-color: #FFF2A8; mso-highlight: yellow; font-weight: bold; color: #8A1C36; padding: 2px 4px; border-radius: 2px;">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
+        if (isDoc) {
+          // Word export: clean black bold letters, no yellow highlighter
+          html += `<strong class="verse-inline" style="color: #000000; font-weight: bold; font-size: 24px;">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</strong>`;
+        } else {
+          // PDF export: brown bold with yellow highlight
+          html += `<span class="verse-inline" style="background-color: #FFF2A8; font-weight: bold; color: #8A1C36; padding: 2px 4px; border-radius: 2px;">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
+        }
       }
       last = m.index + m[0].length;
     }
@@ -113,9 +125,14 @@ function buildHTML(session, forPrint = false, titleOverride) {
     p           { font-size: 24px; font-weight: 700; color: #140F0A; line-height: 1.7; margin: 0 0 16px; }
     .shloka     { border-left: 2px solid #e0843b; padding-left: 14px; margin-bottom: 22px; }
     .shloka-label { font-size: 10px; letter-spacing: 1.5px; color: #b58a3c; display: block; margin-bottom: 4px; }
+    ${isDoc ? `
+    .shloka-text  { font-size: 24px; font-weight: 700; color: #000000; margin: 16px 0; }
+    .verse-inline { font-size: 24px; font-weight: 700; color: #000000; }
+    ` : `
     .shloka-text  { font-size: 24px; font-weight: 700; color: #8A1C36; background-color: #FFF9E6; border-left: 4px solid #E0843B; padding: 10px 14px; margin: 16px 0; }
     .shloka-original { font-size: 15px; font-weight: 400; color: #7a2e25; margin: 0; }
-    .verse-inline { font-size: 24px; font-weight: 700; color: #8A1C36; background-color: #FFF2A8; mso-highlight: yellow; padding: 2px 4px; }
+    .verse-inline { font-size: 24px; font-weight: 700; color: #8A1C36; background-color: #FFF2A8; padding: 2px 4px; }
+    `}
     ${forPrint ? '@media print { body { margin: 20px; } }' : ''}
   </style>
 </head>
@@ -136,7 +153,7 @@ const fileName = (session, ext, customName) =>
   `${(customName || session.title || 'pravachanam').replace(/[^a-z0-9\u0C00-\u0C7F ]/gi, '_').trim() || 'pravachanam'}.${ext}`;
 
 export async function downloadPDF(session, customName) {
-  const html = buildHTML(session, true, customName);
+  const html = buildHTML(session, true, customName, 'pdf');
   if (isWeb) {
     const win = window.open('', '_blank', 'width=800,height=900');
     if (!win) { notify('Pop-up blocked', 'Allow pop-ups for this site to save the PDF.'); return; }
@@ -164,7 +181,7 @@ export async function downloadPDF(session, customName) {
 }
 
 export async function downloadDOC(session, customName) {
-  const html = buildHTML(session, false, customName);
+  const html = buildHTML(session, false, customName, 'doc');
   if (isWeb) {
     const blob = new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' });
     const url = URL.createObjectURL(blob);
