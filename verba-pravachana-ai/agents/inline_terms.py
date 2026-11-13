@@ -19,7 +19,7 @@ from functools import lru_cache
 # Dictionary mapping Telugu transcript spellings to their canonical Tamil or Sanskrit script.
 # Longest phrases are evaluated first so compound names/terms match before single words.
 VAISHNAVA_INLINE_TERMS: dict[str, str] = {
-    # Alwars (ஆழ்வார்கள்)
+    # Alwars (ஆழ்வார்கள்) - Specific Alwar names (canonical titles)
     "నాలాయిర దివ్యప్రబంధం": "நாலாயிர திவ்யப்பிரபந்தம்",
     "నాలాయిర దివ్య ప్రబంధం": "நாலாயிர திவ்யப்பிரபந்தம்",
     "నమ్మాళ్వార్": "நம்மாழ்வார்",
@@ -49,10 +49,6 @@ VAISHNAVA_INLINE_TERMS: dict[str, str] = {
     "మదురకవియాళ్వార్": "மதுரகவியாழ்வார்",
     "మదురకవి ఆళ్వార్": "மதுரகவி ஆழ்வார்",
     "మధురకవియాళ్వార్": "மதுரகவியாழ்வார்",
-    "ఆళ్వార్": "ஆழ்வார்",
-    "ఆళ్వార్లు": "ஆழ்வார்கள்",
-    "ఆళ్వారు": "ஆழ்வார்",
-    "ఆళ్వార్ల": "ஆழ்வார்களின்",
 
     # Acharyas & Preceptors
     "శ్రీమన్నారాయణ": "श्रीमन्नारायण",
@@ -78,7 +74,6 @@ VAISHNAVA_INLINE_TERMS: dict[str, str] = {
     "పిళ్ళై లోకాచార్యర్": "பிள்ளை லோகாசார்யர்",
     "అఴగియ మణవాళర్": "அழகிய மணவாளர்",
     "పరాశర భట్టర్": "பராசர பட்டர்",
-    "భట్టర్": "பட்டர்",
     "నంజీయర్": "நஞ்சீயர்",
     "నంబిళ్ళై": "நம்பிள்ளை",
     "పెరియ నంబి": "பெரிய நம்பி",
@@ -124,15 +119,9 @@ VAISHNAVA_INLINE_TERMS: dict[str, str] = {
     "గోష్ఠి": "கோஷ்டி",
     "గోష్ఠీ": "கோஷ்டி",
     "తీర్థప్రసాదం": "தீர்த்த பிரசாதம்",
-    "తీర్థం": "தீர்த்தம்",
-    "ప్రసాదం": "பிரசாதம்",
-    "సన్నిధి": "சந்நிதி",
-    "కోయిల్": "கோயில்",
-    "కోవిల్": "கோயில்",
     "దివ్యదేశం": "திவ்யதேசம்",
     "దివ్యదేశాలు": "திவ்யதேசங்கள்",
     "దివ్యదేశాల": "திவ்யதேசங்களின்",
-    "మంగళం": "மங்களம்",
     "వాఴి": "வாழி",
     "వాఴియే": "வாழியே",
     "వాఴి తిరునామం": "வாழி திருநாமம்",
@@ -190,8 +179,6 @@ VAISHNAVA_INLINE_TERMS: dict[str, str] = {
     "శ్రీవైష్ణవులు": "ஸ்ரீவைஷ்ணவர்கள்",
 
     # Sanskrit doctrinal terms (render Devanagari)
-    "పరమాత్మ": "परमात्मा",
-    "జీవాత్మ": "जीवात्मा",
     "శ్రీభాష్యం": "श्रीभाष्यम्",
     "శ్రీభాష్య": "श्रीभाष्यम्",
     "బ్రహ్మసూత్రం": "ब्रह्मसूत्रम्",
@@ -201,7 +188,6 @@ VAISHNAVA_INLINE_TERMS: dict[str, str] = {
     "అర్థపంచకం": "अर्थपञ्चकम्",
     "పురుషార్థం": "पुरुषार्थम्",
     "పురుషకారం": "पुरुषकारम्",
-    "మోక్షం": "मोक्षम्",
     "శేషత్వం": "शेषत्वम्",
     "పారతంత్ర్యం": "पारतन्त्र्यम्",
     "భగవద్గీత": "भगवद्गीता",
@@ -209,12 +195,25 @@ VAISHNAVA_INLINE_TERMS: dict[str, str] = {
     "శ్రీవిష్ణుసహస్రనామ": "श्रीविष्णुसहस्रनाम",
 }
 
+# Explicit blocklist of recurring discourse terms that must NEVER be highlighted
+EXCLUDED_RECURRING_TERMS: set[str] = {
+    "పరమాత్మ", "పరమాత్ముడు", "పరమాత్మను", "పరమాత్మకు", "పరమాత్మతో", "పరమాత్మల", "పరమాత్మలో",
+    "జీవాత్మ", "జీవాత్ముడు", "జీవాత్మను", "జీవాత్మకు", "జీవాత్మతో", "జీవాత్మల", "జీవాత్మలో",
+    "భట్టర్", "భట్టరు", "భట్టర్లు", "భట్టర్ల", "భట్టర్లకు",
+    "ఆళ్వార్", "ఆళ్వార్లు", "ఆళ్వారు", "ఆళ్వార్ల", "ఆళ్వార్లకు", "ఆళ్వార్లతో",
+    "తీర్థం", "ప్రసాదం", "మంగళం", "మోక్షం", "సన్నిధి", "కోయిల్", "కోవిల్", "గోష్ఠి",
+}
+
 
 @lru_cache(maxsize=1)
 def _sorted_terms() -> list[tuple[str, str, re.Pattern]]:
     """Sort terms by length descending, with precompiled word-boundary regexes."""
-    # Telugu Unicode block: \u0c00-\u0c7f
-    items = sorted(VAISHNAVA_INLINE_TERMS.items(), key=lambda kv: len(kv[0]), reverse=True)
+    # Filter out any recurring discourse terms that must not be highlighted
+    items = [
+        (term, orig) for term, orig in VAISHNAVA_INLINE_TERMS.items()
+        if re.sub(r'[.,?!:;।॥"\'\s]', '', term) not in EXCLUDED_RECURRING_TERMS
+    ]
+    items.sort(key=lambda kv: len(kv[0]), reverse=True)
     compiled = []
     for term, orig in items:
         # Word boundary in Telugu script: not preceded or followed by a Telugu char
@@ -248,6 +247,9 @@ def detect_inline_terms(norm_transcript: str, existing_shlokas: list) -> list[di
     for term, orig, pat in terms:
         for m in pat.finditer(norm_transcript):
             start, end = m.start(), m.end()
+            matched_clean = re.sub(r'[.,?!:;।॥"\'\s]', '', norm_transcript[start:end])
+            if matched_clean in EXCLUDED_RECURRING_TERMS:
+                continue
             # If this occurrence overlaps any existing verse or already tagged inline term, skip it
             if any(a < end and start < b for a, b in occupied):
                 continue

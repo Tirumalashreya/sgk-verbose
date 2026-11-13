@@ -220,6 +220,20 @@ export function VerseBlock({ c, text, original, reference, type }) {
 const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
 const SHLOKA_MARK = /\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?/g;
 
+// Common recurring discourse words that must NEVER be highlighted
+const EXCLUDED_RECURRING_TERMS = new Set([
+  'పరమాత్మ', 'పరమాత్ముడు', 'పరమాత్మను', 'పరమాత్మకు', 'పరమాత్మతో', 'పరమాత్మల', 'పరమాత్మలో',
+  'జీవాత్మ', 'జీవాత్ముడు', 'జీవాత్మను', 'జీవాత్మకు', 'జీవాత్మతో', 'జీవాత్మల', 'జీవాత్మలో',
+  'భట్టర్', 'భట్టరు', 'భట్టర్లు', 'భట్టర్ల', 'భట్టర్లకు',
+  'ఆళ్వార్', 'ఆళ్వార్లు', 'ఆళ్వారు', 'ఆళ్వార్ల', 'ఆళ్వార్లకు', 'ఆళ్వార్లతో',
+  'తీర్థం', 'ప్రసాదం', 'మంగళం', 'మోక్షం', 'సన్నిధి', 'కోయిల్', 'కోవిల్', 'గోష్ఠి',
+]);
+
+const isExcludedRecurring = (text) => {
+  const clean = (text || '').replace(/[.,?!:;।॥"'\s]/g, '');
+  return EXCLUDED_RECURRING_TERMS.has(clean);
+};
+
 const stripUnwantedBrackets = (s) => (s || '').replace(/\s*\([^)]*[\u0900-\u097f\u0b80-\u0bff][^)]*\)/g, '');
 
 /** Telugu reads first for an inline verse, whichever field it's actually in;
@@ -262,6 +276,10 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
     if (!line) { flush(); paraIndex += 1; paraStarted = false; continue; }
     const whole = line.match(SHLOKA_LINE);
     if (whole) {
+      if (isExcludedRecurring(whole[1])) {
+        para.push(whole[1]);
+        continue;
+      }
       flush();
       markHeadingIfFirst();
       const meta = shlokas.find((s) => (s.text || '').trim() === whole[1].trim());
@@ -276,7 +294,11 @@ export function ReadingText({ c, notes, shlokas = [], roman = false, typeLabel =
       let last = 0;
       for (const m of inline) {
         if (m.index > last) parts.push({ kind: 'text', text: line.slice(last, m.index) });
-        parts.push({ kind: 'verse', text: m[1], original: '' });
+        if (isExcludedRecurring(m[1])) {
+          parts.push({ kind: 'text', text: m[1] });
+        } else {
+          parts.push({ kind: 'verse', text: m[1], original: '' });
+        }
         last = m.index + m[0].length;
       }
       if (last < line.length) parts.push({ kind: 'text', text: line.slice(last) });

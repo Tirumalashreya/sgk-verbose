@@ -17,6 +17,20 @@ const SHLOKA_MARK = /\*\*"?([^"*]+?)"?\*\*(?:\s*\(([^)]*)\))?/g;
 const stripUnwantedBrackets = (s) => (s || '').replace(/\s*\([^)]*[\u0900-\u097f\u0b80-\u0bff][^)]*\)/g, '');
 const stripStars = (s) => (s || '').replace(/\*\*/g, '').replace(/(?<!\w)\*|\*(?!\w)/g, '');
 
+// Common recurring discourse words that must NEVER be highlighted
+const EXCLUDED_RECURRING_TERMS = new Set([
+  'పరమాత్మ', 'పరమాత్ముడు', 'పరమాత్మను', 'పరమాత్మకు', 'పరమాత్మతో', 'పరమాత్మల', 'పరమాత్మలో',
+  'జీవాత్మ', 'జీవాత్ముడు', 'జీవాత్మను', 'జీవాత్మకు', 'జీవాత్మతో', 'జీవాత్మల', 'జీవాత్మలో',
+  'భట్టర్', 'భట్టరు', 'భట్టర్లు', 'భట్టర్ల', 'భట్టర్లకు',
+  'ఆళ్వార్', 'ఆళ్వార్లు', 'ఆళ్వారు', 'ఆళ్వార్ల', 'ఆళ్వార్లకు', 'ఆళ్వార్లతో',
+  'తీర్థం', 'ప్రసాదం', 'మంగళం', 'మోక్షం', 'సన్నిధి', 'కోయిల్', 'కోవిల్', 'గోష్ఠి',
+]);
+
+const isExcludedRecurring = (text) => {
+  const clean = (text || '').replace(/[.,?!:;।॥"'\s]/g, '');
+  return EXCLUDED_RECURRING_TERMS.has(clean);
+};
+
 function teluguFirst(text, original) {
   let primary = text;
   let bracket = original || '';
@@ -53,6 +67,9 @@ function buildHTML(session, forPrint = false, titleOverride) {
     if (!t) { paraIndex += 1; paraStarted = false; return '<br/>'; }
     const whole = t.match(SHLOKA_LINE);
     if (whole) {
+      if (isExcludedRecurring(whole[1])) {
+        return `${headingHTML()}<p>${esc(stripStars(whole[1]))}</p>`;
+      }
       const cleanVerse = stripStars(whole[1]);
       return `${headingHTML()}<p class="shloka-text" style="background-color: #FFF9E6; border-left: 4px solid #E0843B; padding: 10px 14px; margin: 16px 0;"><span style="color: #8A1C36; font-size: 24px; font-weight: bold; background-color: #FFF2A8; mso-highlight: yellow;">"${esc(cleanVerse)}"</span></p>`;
     }
@@ -61,8 +78,12 @@ function buildHTML(session, forPrint = false, titleOverride) {
     let html = '', last = 0;
     for (const m of inline) {
       html += esc(stripStars(stripUnwantedBrackets(t.slice(last, m.index))));
-      const { primary, bracket } = teluguFirst(m[1], m[2]);
-      html += `<span class="verse-inline" style="background-color: #FFF2A8; mso-highlight: yellow; font-weight: bold; color: #8A1C36; padding: 2px 4px; border-radius: 2px;">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
+      if (isExcludedRecurring(m[1])) {
+        html += esc(stripStars(m[1]));
+      } else {
+        const { primary, bracket } = teluguFirst(m[1], m[2]);
+        html += `<span class="verse-inline" style="background-color: #FFF2A8; mso-highlight: yellow; font-weight: bold; color: #8A1C36; padding: 2px 4px; border-radius: 2px;">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
+      }
       last = m.index + m[0].length;
     }
     html += esc(stripStars(stripUnwantedBrackets(t.slice(last))));

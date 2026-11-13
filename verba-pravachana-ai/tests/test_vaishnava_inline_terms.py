@@ -61,3 +61,24 @@ def test_inline_terms_do_not_overlap_with_recited_verses():
     assert len(inline) == 1
     assert inline[0]["text"] == "శ్రీభాష్యం"
     assert inline[0]["start_index"] < v_start
+
+def test_recurring_discourse_words_not_highlighted():
+    # Recurring discourse words like పరమాత్మ, భట్టర్, ఆళ్వార్లు must NOT be highlighted
+    transcript = "పరమాత్మ గురించి ఆళ్వార్లు చెప్పారు. అప్పుడు భట్టర్ వారు వ్యాఖ్యానిస్తూ శ్రీభాష్యం అనుసరించారు."
+    norm = normalize_ws(transcript)
+    inline = detect_inline_terms(norm, existing_shlokas=[])
+    inline_texts = [t["text"] for t in inline]
+    
+    assert "పరమాత్మ" not in inline_texts
+    assert "ఆళ్వార్లు" not in inline_texts
+    assert "భట్టర్" not in inline_texts
+    assert "శ్రీభాష్యం" in inline_texts
+    
+    notes = format_notes(norm, inline)
+    assert '**"పరమాత్మ"**' not in notes
+    assert '**"ఆళ్వార్లు"**' not in notes
+    assert '**"భట్టర్"**' not in notes
+    assert '**"శ్రీభాష్యం"**' in notes
+    assert "పరమాత్మ" in notes
+    assert "ఆళ్వార్లు" in notes
+    assert "భట్టర్" in notes

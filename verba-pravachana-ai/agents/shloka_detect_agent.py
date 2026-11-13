@@ -18,6 +18,11 @@ _TELUGU     = re.compile(r'[ఀ-౿]')
 def _is_valid_shloka(text: str, language: str = "", confidence: float = 0.0) -> bool:
     if not text or len(text) < 5:
         return False
+    # Never accept single recurring discourse terms as shlokas
+    clean_t = re.sub(r'[.,?!:;।॥"\'\s]', '', text or '')
+    from agents.inline_terms import EXCLUDED_RECURRING_TERMS
+    if clean_t in EXCLUDED_RECURRING_TERMS:
+        return False
     lang_lower = language.lower()
     is_tamil_or_sanskrit = any(k in lang_lower for k in ("tamil", "sanskrit", "pasuram", "paasuram"))
     if not is_tamil_or_sanskrit:
