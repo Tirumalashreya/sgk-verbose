@@ -11,9 +11,11 @@ const isTelugu = (s) => /[ఀ-౿]/.test(s || '');
 // mirrors react-native/src/ui/kit.js's ReadingText, since both parse the
 // same notes text independently.
 const SHLOKA_LINE = /^\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?$/;
-const SHLOKA_MARK = /\*\*"(.+?)"\*\*(?:\s*\(([^)]*)\))?/g;
+// Match both **"word"** and **word** with optional brackets
+const SHLOKA_MARK = /\*\*"?([^"*]+?)"?\*\*(?:\s*\(([^)]*)\))?/g;
 
 const stripUnwantedBrackets = (s) => (s || '').replace(/\s*\([^)]*[\u0900-\u097f\u0b80-\u0bff][^)]*\)/g, '');
+const stripStars = (s) => (s || '').replace(/\*\*/g, '').replace(/(?<!\w)\*|\*(?!\w)/g, '');
 
 function teluguFirst(text, original) {
   let primary = text;
@@ -25,7 +27,7 @@ function teluguFirst(text, original) {
   if (/[஀-௿\u0900-\u097f]/.test(bracket)) {
     bracket = '';
   }
-  return { primary, bracket };
+  return { primary: stripStars(primary), bracket: stripStars(bracket) };
 }
 
 function buildHTML(session, forPrint = false, titleOverride) {
@@ -51,18 +53,19 @@ function buildHTML(session, forPrint = false, titleOverride) {
     if (!t) { paraIndex += 1; paraStarted = false; return '<br/>'; }
     const whole = t.match(SHLOKA_LINE);
     if (whole) {
-      return `${headingHTML()}<p class="shloka-text"><strong>"${esc(whole[1])}"</strong></p>`;
+      const cleanVerse = stripStars(whole[1]);
+      return `${headingHTML()}<p class="shloka-text" style="background-color: #FFF9E6; border-left: 4px solid #E0843B; padding: 10px 14px; margin: 16px 0;"><span style="color: #8A1C36; font-size: 24px; font-weight: bold; background-color: #FFF2A8; mso-highlight: yellow;">"${esc(cleanVerse)}"</span></p>`;
     }
     const inline = [...t.matchAll(SHLOKA_MARK)];
-    if (!inline.length) return `${headingHTML()}<p>${esc(stripUnwantedBrackets(t))}</p>`;
+    if (!inline.length) return `${headingHTML()}<p>${esc(stripStars(stripUnwantedBrackets(t)))}</p>`;
     let html = '', last = 0;
     for (const m of inline) {
-      html += esc(stripUnwantedBrackets(t.slice(last, m.index)));
+      html += esc(stripStars(stripUnwantedBrackets(t.slice(last, m.index))));
       const { primary, bracket } = teluguFirst(m[1], m[2]);
-      html += `<span class="verse-inline">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
+      html += `<span class="verse-inline" style="background-color: #FFF2A8; mso-highlight: yellow; font-weight: bold; color: #8A1C36; padding: 2px 4px; border-radius: 2px;">${esc(primary)}${bracket ? ` (${esc(bracket)})` : ''}</span>`;
       last = m.index + m[0].length;
     }
-    html += esc(stripUnwantedBrackets(t.slice(last)));
+    html += esc(stripStars(stripUnwantedBrackets(t.slice(last))));
     return `${headingHTML()}<p>${html}</p>`;
   }).join('');
 
@@ -89,9 +92,9 @@ function buildHTML(session, forPrint = false, titleOverride) {
     p           { font-size: 24px; font-weight: 700; color: #140F0A; line-height: 1.7; margin: 0 0 16px; }
     .shloka     { border-left: 2px solid #e0843b; padding-left: 14px; margin-bottom: 22px; }
     .shloka-label { font-size: 10px; letter-spacing: 1.5px; color: #b58a3c; display: block; margin-bottom: 4px; }
-    .shloka-text  { font-size: 24px; font-weight: 700; color: #5b513f; margin: 0 0 6px; }
+    .shloka-text  { font-size: 24px; font-weight: 700; color: #8A1C36; background-color: #FFF9E6; border-left: 4px solid #E0843B; padding: 10px 14px; margin: 16px 0; }
     .shloka-original { font-size: 15px; font-weight: 400; color: #7a2e25; margin: 0; }
-    .verse-inline { font-size: 24px; font-weight: 700; color: #7a2e25; }
+    .verse-inline { font-size: 24px; font-weight: 700; color: #8A1C36; background-color: #FFF2A8; mso-highlight: yellow; padding: 2px 4px; }
     ${forPrint ? '@media print { body { margin: 20px; } }' : ''}
   </style>
 </head>

@@ -6,6 +6,7 @@ import Sanscript from '@indic-transliteration/sanscript';
 import { useTheme, F, T, S, R } from '../theme';
 import Icon from '../ui/Icon';
 import { Screen, Enter, IconButton, Chip, Button, ReadingText, VerseBlock, sessionStatus, ExportDialog } from '../ui/kit';
+import TeluguKeypad from '../ui/TeluguKeypad';
 import { getSessions, getTimestampedNotes, updateNotes, updateSessionTitle, downloadSessionAudio } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
 import { notify } from '../services/platform';
@@ -71,10 +72,38 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   const [titleDraft, setTitleDraft] = useState('');
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [teluguAidOn, setTeluguAidOn] = useState(false);
+  const [showKeypad, setShowKeypad] = useState(false);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef(null);
   const [romanInput, setRomanInput] = useState('');
   const [exportKind, setExportKind] = useState(null);   // 'pdf' | 'doc' | null (dialog closed)
+
+  const insertKeypadChar = (char) => {
+    const start = selection.start ?? draft.length;
+    const end = selection.end ?? draft.length;
+    const before = draft.slice(0, start);
+    const after = draft.slice(end);
+    const nextText = before + char + after;
+    const nextPos = start + char.length;
+    setDraft(nextText);
+    setSelection({ start: nextPos, end: nextPos });
+  };
+
+  const backspaceKeypad = () => {
+    const start = selection.start ?? draft.length;
+    const end = selection.end ?? draft.length;
+    if (start !== end) {
+      const nextText = draft.slice(0, start) + draft.slice(end);
+      setDraft(nextText);
+      setSelection({ start, end: start });
+      return;
+    }
+    if (start <= 0) return;
+    const before = draft.slice(0, start - 1);
+    const after = draft.slice(start);
+    setDraft(before + after);
+    setSelection({ start: start - 1, end: start - 1 });
+  };
 
   const teluguPreview = useMemo(() => {
     if (!romanInput.trim()) return '';
@@ -175,9 +204,10 @@ export default function ReadingScreen({ go, back, t, session: given }) {
     setTitleDraft(session.title || '');
     setEditing(true);
     setTeluguAidOn(false);
+    setShowKeypad(false);
     setRomanInput('');
   };
-  const cancelEdit = () => { setEditing(false); setTeluguAidOn(false); setRomanInput(''); };
+  const cancelEdit = () => { setEditing(false); setTeluguAidOn(false); setShowKeypad(false); setRomanInput(''); };
   const saveEdit = async () => {
     setSaving(true);
     try {
@@ -410,20 +440,29 @@ export default function ReadingScreen({ go, back, t, session: given }) {
               accessibilityLabel={t('notes')}
               style={[T.read, st.editInput, { color: c.ink, borderColor: c.brass, backgroundColor: c.surface }]}
             />
-            <View style={{ flexDirection: 'row', gap: S.s }}>
+            <View style={{ flexDirection: 'row', gap: S.s, flexWrap: 'wrap' }}>
               <Pressable onPress={() => setTeluguAidOn((v) => !v)} accessibilityRole="button" accessibilityState={{ selected: teluguAidOn }}
-                style={[st.aidToggle, { borderColor: c.brass, backgroundColor: teluguAidOn ? c.brass : 'transparent', flex: 1, paddingVertical: 10 }]}>
+                style={[st.aidToggle, { borderColor: c.brass, backgroundColor: teluguAidOn ? c.brass : 'transparent', flex: 1, minWidth: 100, paddingVertical: 10 }]}>
                 <Text style={[T.label, { color: teluguAidOn ? c.onBrass : c.brass, textAlign: 'center' }]}>
                   {teluguAidOn ? '✓ ' + t('teluguAid') : t('teluguAid')}
                 </Text>
               </Pressable>
+              <Pressable onPress={() => setShowKeypad((v) => !v)} accessibilityRole="button" accessibilityState={{ selected: showKeypad }}
+                style={[st.aidToggle, { borderColor: c.brass, backgroundColor: showKeypad ? c.brass : 'transparent', flex: 1, minWidth: 120, paddingVertical: 10 }]}>
+                <Text style={[T.label, { color: showKeypad ? c.onBrass : c.brass, textAlign: 'center' }]}>
+                  {showKeypad ? '✓ తెలుగు కీబోర్డ్' : '⌨️ తెలుగు కీబోర్డ్'}
+                </Text>
+              </Pressable>
               <Pressable onPress={toggleVoice} accessibilityRole="button"
-                style={[st.aidToggle, { borderColor: listening ? c.kumkum : c.brass, backgroundColor: listening ? c.kumkum : 'transparent', flex: 1, paddingVertical: 10 }]}>
+                style={[st.aidToggle, { borderColor: listening ? c.kumkum : c.brass, backgroundColor: listening ? c.kumkum : 'transparent', flex: 1, minWidth: 90, paddingVertical: 10 }]}>
                 <Text style={[T.label, { color: listening ? '#fff' : c.brass, textAlign: 'center' }]}>
                   {listening ? '🔴 ' + t('teluguVoiceListening') : '🎙️ ' + t('teluguVoice')}
                 </Text>
               </Pressable>
             </View>
+            {showKeypad && (
+              <TeluguKeypad onInsert={insertKeypadChar} onBackspace={backspaceKeypad} onClose={() => setShowKeypad(false)} />
+            )}
             {teluguAidOn && (
               <View style={[st.aidPanel, { borderColor: c.line, backgroundColor: c.surface }]}>
                 <Text style={[T.body, { color: c.muted, fontSize: 12.5, marginBottom: S.xs }]}>{t('teluguAidHint')}</Text>
@@ -449,6 +488,11 @@ export default function ReadingScreen({ go, back, t, session: given }) {
             <View style={{ flexDirection: 'row', gap: S.s }}>
               <Button c={c} variant="quiet" label={t('editCancel')} onPress={cancelEdit} style={{ flex: 1 }} disabled={saving} />
               <Button c={c} variant="brass" label={saving ? t('editSaved') + '…' : t('editSave')} onPress={saveEdit} style={{ flex: 1 }} disabled={saving} />
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: S.xs }}>
+              <Pressable onPress={() => exportAs('doc')} accessibilityRole="button" style={[st.aidToggle, { borderColor: c.brass, paddingVertical: 8, paddingHorizontal: 16 }]}>
+                <Text style={[T.label, { color: c.brass, fontSize: 13 }]}>📄 Word (.doc) లో ఎడిట్ చేయడానికి డౌన్‌లోడ్</Text>
+              </Pressable>
             </View>
           </View>
         )}

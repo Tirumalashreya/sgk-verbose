@@ -238,6 +238,19 @@ export const downloadSessionAudio = async (sessionId, customTitle) => {
   }
 };
 
+export const mergeSessions = async (ids) => {
+  const res = await apiFetch('/merge-sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Merge failed');
+  }
+  return res.json();
+};
+
 export const createWebSocket = async (onMessage, onOpen, onClose) => {
   const token = await authToken();
   const wsUrl = API_BASE.replace(/^http/, 'ws') + '/ws' + (token ? `?token=${token}` : '');

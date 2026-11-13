@@ -1249,11 +1249,12 @@ class MergeRequest(BaseModel):
 @app.post("/merge-sessions")
 async def merge_sessions(data: MergeRequest, request: Request):
     """Join several recordings of one pravachanam into one set of notes, in the
-    order they were recorded. The earliest keeps its id and title."""
+    exact sequence selected by the user. The first chosen keeps its id and title."""
     from fastapi import HTTPException
     username = request.state.username
-    found = sorted((s for s in sessions_store if s.get("id") in set(data.ids) and s.get("created_by") == username),
-                   key=lambda s: s.get("created_at") or "")
+    id_order = {sid: idx for idx, sid in enumerate(data.ids)}
+    found = [s for s in sessions_store if s.get("id") in id_order and s.get("created_by") == username]
+    found.sort(key=lambda s: id_order.get(s.get("id"), 0))
     if len(found) < 2 or len(found) != len(set(data.ids)):
         raise HTTPException(status_code=400, detail="Need at least two existing sessions belonging to this user")
     threading.Thread(target=_merge_sessions, args=(found,), daemon=True).start()
@@ -1265,10 +1266,35 @@ def _merge_sessions(found: list[dict]):
     first = found[0]
     transcript = "\n".join((s.get("transcript") or "").strip() for s in found).strip()
     raw = "\n".join((s.get("raw_transcript") or s.get("transcript") or "").strip() for s in found).strip()
-    print(f"[merge] joining {len(found)} recordings ({len(transcript)} chars) into one set of notes...")
+    print(f"[merge] joining {len(found)} recordings ({len(transcript)} chars) into one set of notes in user-selected order...")
     try:
         with _pipeline_semaphore:
             result = _run_text_steps(transcript, 0, f"live:{first['id']}")
+
+        # Concatenate audio files if present
+        merged_audio_path = None
+        try:
+            from agents import notes_timestamp as nt
+            audio_files = []
+            for s in found:
+                ap = nt._find_audio(s)
+                if ap and os.path.exists(ap):
+                    audio_files.append(ap)
+            if len(audio_files) == len(found):
+                merged_audio_path = f"audio_input/merged_{first['id'][:8]}.m4a"
+                concat_list_path = f"audio_input/concat_{first['id'][:8]}.txt"
+                with open(concat_list_path, "w", encoding="utf-8") as f_list:
+                    for af in audio_files:
+                        f_list.write(f"file '{os.path.abspath(af)}'\n")
+                subprocess.run(
+                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list_path, "-c:a", "aac", "-b:a", "128k", merged_audio_path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
+                )
+                try: os.remove(concat_list_path)
+                except Exception: pass
+        except Exception as e_audio:
+            print(f"[merge] audio concat optional step skipped: {e_audio}")
+
         merged = _session_from_result({**result, "transcript": transcript}, first.get("title"), 0,
                                       raw_transcript=raw, asr_provider=first.get("asr_provider"),
                                       pieces_recorded=sum(int(s.get("pieces_recorded") or 1) for s in found),
@@ -1276,6 +1302,8 @@ def _merge_sessions(found: list[dict]):
                                       created_by=first.get("created_by"))
         merged["id"], merged["created_at"] = first["id"], first["created_at"]
         merged["created_by"] = first.get("created_by")
+        if merged_audio_path and os.path.exists(merged_audio_path):
+            merged["source_audio_path"] = merged_audio_path
         gone = {s["id"] for s in found[1:]}
         _forget_memory([f"live:{i}" for i in gone])
         sessions_store = [merged if s.get("id") == first["id"] else s for s in sessions_store if s.get("id") not in gone]
