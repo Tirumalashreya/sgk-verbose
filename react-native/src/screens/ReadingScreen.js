@@ -762,7 +762,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
               <Pressable onPress={() => setShowKeypad((v) => !v)} accessibilityRole="button" accessibilityState={{ selected: showKeypad }}
                 style={[st.aidToggle, { borderColor: c.brass, backgroundColor: showKeypad ? c.brass : 'transparent', flex: 1, minWidth: 120, paddingVertical: 10 }]}>
                 <Text style={[T.label, { color: showKeypad ? c.onBrass : c.brass, textAlign: 'center' }]}>
-                  {showKeypad ? '✓ తెలుగు కీబోర్డ్' : '⌨️ తెలుగు కీబోర్డ్'}
+                  {showKeypad ? '✓ Telugu Keypad' : '⌨️ Telugu Keypad'}
                 </Text>
               </Pressable>
               <Pressable onPress={toggleVoice} accessibilityRole="button"

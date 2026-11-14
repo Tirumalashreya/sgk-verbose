@@ -186,7 +186,7 @@ export default function AskScreen({ t, lang }) {
             style={[st.aidToggle, { borderColor: c.brass, backgroundColor: showKeypad ? c.brass : 'transparent', flex: 1, minWidth: 120, paddingVertical: 8 }]}
           >
             <Text style={[T.label, { color: showKeypad ? c.onBrass : c.brass, textAlign: 'center', fontSize: 12 }]}>
-              {showKeypad ? '✓ తెలుగు కీబోర్డ్' : '⌨️ తెలుగు కీబోర్డ్'}
+              {showKeypad ? '✓ Telugu Keypad' : '⌨️ Telugu Keypad'}
             </Text>
           </Pressable>
 
