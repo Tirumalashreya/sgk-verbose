@@ -4,7 +4,7 @@ import { View, Text, TextInput, Pressable, RefreshControl, Modal, ScrollView, Ac
 import { useTheme, F, T, S, R } from '../theme';
 import { Screen, Enter, SessionRow, Button } from '../ui/kit';
 import Icon from '../ui/Icon';
-import { getSessions, deleteSession, mergeSessions, createWebSocket } from '../services/api';
+import { getSessions, getSession, deleteSession, mergeSessions, createWebSocket } from '../services/api';
 import { downloadDOC } from '../services/download';
 import { confirm, notify } from '../services/platform';
 
@@ -83,9 +83,14 @@ export default function HistoryScreen({ go, t, lang }) {
 
   const handleDownloadWord = async (s) => {
     try {
-      await downloadDOC(s);
+      let fullSession = s;
+      if (!fullSession?.notes) {
+        const res = await getSession(s.id);
+        if (res?.session) fullSession = res.session;
+      }
+      await downloadDOC(fullSession);
     } catch (e) {
-      notify(t('history'), String(e.message || 'Download failed'));
+      notify(t('notes'), String(e.message || 'Download failed'));
     }
   };
 

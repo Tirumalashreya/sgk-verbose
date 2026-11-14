@@ -82,8 +82,13 @@ export const startSession = async (youtubeUrl) => {
   return res.json();
 };
 
-export const getSessions = async () => {
-  const res = await apiFetch('/sessions');
+export const getSessions = async (full = false) => {
+  const res = await apiFetch(`/sessions${full ? '?full=true' : ''}`);
+  return res.json();
+};
+
+export const getSession = async (sessionId) => {
+  const res = await apiFetch(`/sessions/${sessionId}`);
   return res.json();
 };
 

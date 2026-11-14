@@ -1,13 +1,13 @@
 // Reading — the complete verbatim notes, calm and legible. Follows the phone's
 // light/dark setting (Manuscript by day, Hall at night).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
+import { View, Text, Pressable, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
 import Sanscript from '@indic-transliteration/sanscript';
 import { useTheme, F, T, S, R } from '../theme';
 import Icon from '../ui/Icon';
 import { Screen, Enter, IconButton, Chip, Button, ReadingText, VerseBlock, sessionStatus, ExportDialog } from '../ui/kit';
 import TeluguKeypad from '../ui/TeluguKeypad';
-import { getSessions, getTimestampedNotes, updateNotes, updateSessionTitle, downloadSessionAudio } from '../services/api';
+import { getSessions, getSession, getTimestampedNotes, updateNotes, updateSessionTitle, downloadSessionAudio } from '../services/api';
 import { downloadPDF, downloadDOC } from '../services/download';
 import { isWeb, notify } from '../services/platform';
 
@@ -60,6 +60,7 @@ function transliterateWord(w) {
 export default function ReadingScreen({ go, back, t, session: given }) {
   const c = useTheme();
   const [session, setSession] = useState(given || null);
+  const [sessionLoading, setSessionLoading] = useState(!given || (!given.notes && !given.transcript));
   const [tab, setTab] = useState('notes');
   const [showReview, setShowReview] = useState(false);
   // 'idle' | 'loading' | 'ready' | 'unavailable' | 'error'
@@ -339,14 +340,61 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   };
 
   useEffect(() => {
-    if (given) { setSession(given); return; }
-    getSessions().then((d) => { const l = d.sessions || []; setSession(l[l.length - 1] || null); }).catch(() => {});
-  }, [given]);
+    let cancelled = false;
 
-  if (!session) {
+    const loadSessionData = async () => {
+      if (given && (given.notes || given.transcript)) {
+        setSession(given);
+        setSessionLoading(false);
+        return;
+      }
+
+      if (given?.id) {
+        setSessionLoading(true);
+        try {
+          const res = await getSession(given.id);
+          if (!cancelled && res?.session) {
+            setSession(res.session);
+          }
+        } catch (e) {
+          console.warn('[ReadingScreen] Could not fetch session by id:', e);
+        } finally {
+          if (!cancelled) setSessionLoading(false);
+        }
+        return;
+      }
+
+      setSessionLoading(true);
+      try {
+        const d = await getSessions();
+        const list = d.sessions || [];
+        const latest = list[list.length - 1];
+        if (latest?.id) {
+          const full = await getSession(latest.id);
+          if (!cancelled && full?.session) {
+            setSession(full.session);
+          }
+        }
+      } catch (e) {
+        console.warn('[ReadingScreen] Could not fetch latest session:', e);
+      } finally {
+        if (!cancelled) setSessionLoading(false);
+      }
+    };
+
+    loadSessionData();
+    return () => { cancelled = true; };
+  }, [given?.id]);
+
+  if (sessionLoading || !session) {
     return (
       <Screen c={c}>
-        <Text style={[T.body, { color: c.muted, marginTop: S.x4, textAlign: 'center' }]}>{t('emptyLibrary')}</Text>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: S.xxl * 2 }}>
+          <ActivityIndicator size="large" color={c.brass} />
+          <Text style={[T.body, { color: c.muted, marginTop: S.m, textAlign: 'center' }]}>
+            Loading notes…
+          </Text>
+        </View>
       </Screen>
     );
   }

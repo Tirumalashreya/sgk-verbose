@@ -692,13 +692,46 @@ code {{ font-family: Menlo, Monaco, monospace; font-size: 12px; color: #74c0fc; 
     return Response(content=page, media_type="text/html")
 
 
+def _session_summary(s: dict) -> dict:
+    has_n = bool(s.get("notes") or s.get("transcript"))
+    return {
+        "id": s.get("id"),
+        "title": s.get("title", "Pravachanam"),
+        "created_at": s.get("created_at"),
+        "duration": s.get("duration", 0),
+        "created_by": s.get("created_by"),
+        "edited": s.get("edited", False),
+        "edited_at": s.get("edited_at"),
+        "status": s.get("status"),
+        "has_notes": has_n,
+        "notes": "1" if has_n else "",  # backward-compatible indicator so row status sees notes exist
+        "shlokas": [{"id": i} for i in range(len(s.get("shlokas") or []))],
+        "shlokas_count": len(s.get("shlokas") or []),
+        "asr_report": {"uncertain": s.get("asr_report", {}).get("uncertain", [])} if s.get("asr_report") else {},
+    }
+
+
 @app.get("/sessions")
-async def get_sessions(request: Request):
+async def get_sessions(request: Request, full: bool = False):
     # Strict per-user isolation: Each logged-in user only sees their own
     # notes and recordings on their Home and History screens.
     username = request.state.username
     _log_activity(username, "Opened App / Viewed Notes", request)
-    return {"sessions": [s for s in sessions_store if not s.get("archived") and not s.get("deleted") and s.get("created_by") == username]}
+    user_sessions = [s for s in sessions_store if not s.get("archived") and not s.get("deleted") and s.get("created_by") == username]
+    if full:
+        return {"sessions": user_sessions}
+    return {"sessions": [_session_summary(s) for s in user_sessions]}
+
+
+@app.get("/sessions/{session_id}")
+async def get_session(session_id: str, request: Request):
+    """Retrieve full verbatim notes, verses, and transcript for one single recording on demand."""
+    from fastapi import HTTPException
+    username = request.state.username
+    session = next((s for s in sessions_store if str(s.get("id", "")) == session_id and s.get("created_by") == username and not s.get("deleted")), None)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"session": session}
 
 
 @app.get("/sessions/{session_id}/timestamps")
