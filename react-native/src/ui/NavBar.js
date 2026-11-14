@@ -23,12 +23,13 @@ export default function NavBar({ c, t, screen, go }) {
   };
   return (
     <View style={[st.bar, { backgroundColor: c.surface, borderTopColor: c.line, paddingBottom: Math.max(insets.bottom, 10) }]}>
-      {/* Left wing: Home pushed towards the left */}
+      {/* Left wing: Home in slot 1, Notes in slot 2 (where History was) */}
       <View style={st.leftWing}>
-        <Item id="home" icon="home" label={nav.home} style={st.homeItem} />
+        <Item id="home" icon="home" label={nav.home} style={st.leftItem} />
+        <Item id="history" icon="book" label={nav.notes} style={st.leftItem} />
       </View>
 
-      {/* Center: Record (Mic) pinned in the exact 50% middle */}
+      {/* Center: Record (Mic) pinned in exact 50% middle */}
       <Pressable onPress={() => go('live')} accessibilityRole="button" accessibilityLabel={nav.record} style={st.recordWrap}>
         <LinearGradient colors={[c.kumkum, c.kumkumDeep]} style={[st.record, { borderColor: c.bg }]}>
           <Icon name="mic" size={26} color={c.onFill} />
@@ -36,10 +37,9 @@ export default function NavBar({ c, t, screen, go }) {
         <Text style={{ fontFamily: isTelugu(nav.record) ? F.readMed : F.uiSemi, fontSize: 11, color: screen === 'live' ? c.brass : c.muted, marginTop: 2 }}>{nav.record}</Text>
       </Pressable>
 
-      {/* Right wing: Ask beside Record, and Notes towards the right */}
+      {/* Right wing: Ask */}
       <View style={st.rightWing}>
         <Item id="ask" icon="search" label={nav.ask} style={st.rightItem} />
-        <Item id="history" icon="book" label={nav.notes} style={st.rightItem} />
       </View>
     </View>
   );
@@ -57,11 +57,11 @@ const st = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'flex-end',
-    justifyContent: 'flex-start',
-    paddingLeft: S.l,
+    justifyContent: 'space-around',
   },
-  homeItem: {
-    width: 64,
+  leftItem: {
+    flex: 1,
+    maxWidth: 76,
   },
   recordWrap: {
     width: 72,
@@ -85,12 +85,11 @@ const st = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'flex-end',
-    justifyContent: 'flex-end',
-    paddingRight: S.m,
+    justifyContent: 'space-around',
   },
   rightItem: {
     flex: 1,
-    maxWidth: 72,
+    maxWidth: 76,
   },
   item: {
     alignItems: 'center',
