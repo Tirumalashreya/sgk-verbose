@@ -3,8 +3,11 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { useTheme, F, T, S, R } from '../theme';
 
-const SIGNS = [
-  '్', 'ా', 'ి', 'ీ', 'ు', 'ూ', 'ృ', 'ౄ', 'ె', 'ే', 'ై', 'ొ', 'ో', 'ౌ', 'ం', 'ః', 'ఁ',
+const MATRAS = [
+  '్', 'ా', 'ి', 'ీ', 'ు', 'ూ', 'ృ', 'ౄ', 'ె', 'ే', 'ై', 'ొ', 'ో', 'ౌ', 'ం', 'ః', 'ఁ'
+];
+
+const OTTULU = [
   '్క', '్ఖ', '్గ', '్ఘ', '్చ', '్ఛ', '్జ', '్ట', '్ఠ', '్డ', '్ణ', '్త', '్థ', '్ద', '్ధ',
   '్న', '్ప', '్ఫ', '్బ', '్భ', '్మ', '్య', '్ర', '్ల', '్వ', '్శ', '్ష', '్స', '్హ', '్ళ', '్ఱ'
 ];
@@ -25,16 +28,24 @@ const VOWELS = [
 ];
 
 const TABS = [
-  { id: 'signs', label: 'Matras & Signs' },
-  { id: 'consonants', label: 'Consonants' },
-  { id: 'vowels', label: 'Vowels' },
+  { id: 'matras', label: 'మాత్రలు' },
+  { id: 'ottulu', label: 'వత్తులు' },
+  { id: 'consonants', label: 'హల్లులు' },
+  { id: 'vowels', label: 'అచ్చులు' },
 ];
 
 export default function TeluguKeypad({ onInsert, onBackspace, onClose }) {
   const c = useTheme();
-  const [activeTab, setActiveTab] = useState('signs');
+  const [activeTab, setActiveTab] = useState('matras');
 
-  const chars = activeTab === 'signs' ? SIGNS : activeTab === 'consonants' ? CONSONANTS : VOWELS;
+  const chars =
+    activeTab === 'matras'
+      ? MATRAS
+      : activeTab === 'ottulu'
+      ? OTTULU
+      : activeTab === 'consonants'
+      ? CONSONANTS
+      : VOWELS;
 
   return (
     <View style={[st.container, { backgroundColor: c.surface, borderColor: c.brass }]}>
@@ -94,14 +105,14 @@ export default function TeluguKeypad({ onInsert, onBackspace, onClose }) {
           onPress={() => onInsert(' ')}
           style={[st.controlBtn, { flex: 2, backgroundColor: c.raised, borderColor: c.line }]}
         >
-          <Text style={[st.controlText, { color: c.ink }]}>Space</Text>
+          <Text style={[st.controlText, { color: c.ink }]}>స్పేస్ (Space)</Text>
         </Pressable>
         <Pressable
           onPress={onBackspace}
-          style={[st.controlBtn, { flex: 1, backgroundColor: c.raised, borderColor: c.line }]}
+          style={[st.controlBtn, { flex: 1.5, backgroundColor: c.raised, borderColor: c.line }]}
           accessibilityLabel="Backspace"
         >
-          <Text style={[st.controlText, { color: c.kumkumText || c.ink, fontWeight: '700' }]}>⌫ Backspace</Text>
+          <Text style={[st.controlText, { color: c.kumkumText || c.ink, fontWeight: '700' }]}>⌫ వెనుకకు</Text>
         </Pressable>
         {['.', ',', '?', '"'].map((p) => (
           <Pressable

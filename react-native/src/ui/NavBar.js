@@ -31,7 +31,7 @@ export default function NavBar({ c, t, screen, go }) {
         </LinearGradient>
         <Text style={{ fontFamily: isTelugu(nav.record) ? F.readMed : F.uiSemi, fontSize: 11, color: screen === 'live' ? c.brass : c.muted, marginTop: 2 }}>{nav.record}</Text>
       </Pressable>
-      <Item id="ask" icon="search" label={nav.search || 'Search'} />
+      <Item id="ask" icon="search" label={nav.ask || 'Ask'} />
     </View>
   );
 }
