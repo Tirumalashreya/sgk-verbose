@@ -59,8 +59,9 @@ function transliterateWord(w) {
 
 export default function ReadingScreen({ go, back, t, session: given }) {
   const c = useTheme();
-  const [session, setSession] = useState(given || null);
-  const [sessionLoading, setSessionLoading] = useState(!given || (!given.notes && !given.transcript));
+  const hasGivenFull = Boolean(given && ((given.notes && given.notes.length > 50) || (given.transcript && given.transcript.length > 50)));
+  const [session, setSession] = useState(hasGivenFull ? given : null);
+  const [sessionLoading, setSessionLoading] = useState(!hasGivenFull);
   const [tab, setTab] = useState('notes');
   const [showReview, setShowReview] = useState(false);
   // 'idle' | 'loading' | 'ready' | 'unavailable' | 'error'
@@ -343,13 +344,13 @@ export default function ReadingScreen({ go, back, t, session: given }) {
     let cancelled = false;
 
     const loadSessionData = async () => {
-      if (given && (given.notes || given.transcript)) {
-        setSession(given);
-        setSessionLoading(false);
-        return;
-      }
-
       if (given?.id) {
+        if ((given.notes && given.notes.length > 50) || (given.transcript && given.transcript.length > 50)) {
+          setSession(given);
+          setSessionLoading(false);
+          return;
+        }
+
         setSessionLoading(true);
         try {
           const res = await getSession(given.id);

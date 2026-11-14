@@ -136,7 +136,9 @@ export function Portrait({ c, size = 52, source = acharyaPhoto }) {
 }
 
 export function sessionStatus(s) {
-  if (!s.notes && !s.transcript) return 'processing';
+  if (!s) return 'processing';
+  if (s.status === 'processing') return 'processing';
+  if (!s.has_notes && !s.notes && !s.transcript) return 'processing';
   // Only a real two-listener disagreement counts as "needs review" — an ASR
   // gap or a low term-dictionary confidence score is a different situation
   // (and with ASR_PROVIDER no longer "dual", there's rarely a second listener

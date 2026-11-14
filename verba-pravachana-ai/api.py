@@ -704,7 +704,6 @@ def _session_summary(s: dict) -> dict:
         "edited_at": s.get("edited_at"),
         "status": s.get("status"),
         "has_notes": has_n,
-        "notes": "1" if has_n else "",  # backward-compatible indicator so row status sees notes exist
         "shlokas": [{"id": i} for i in range(len(s.get("shlokas") or []))],
         "shlokas_count": len(s.get("shlokas") or []),
         "asr_report": {"uncertain": s.get("asr_report", {}).get("uncertain", [])} if s.get("asr_report") else {},

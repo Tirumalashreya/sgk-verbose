@@ -84,7 +84,7 @@ export default function HistoryScreen({ go, t, lang }) {
   const handleDownloadWord = async (s) => {
     try {
       let fullSession = s;
-      if (!fullSession?.notes) {
+      if (!fullSession?.notes || fullSession.notes.length < 50) {
         const res = await getSession(s.id);
         if (res?.session) fullSession = res.session;
       }
