@@ -1289,8 +1289,8 @@ async def merge_sessions(data: MergeRequest, request: Request):
     found.sort(key=lambda s: id_order.get(s.get("id"), 0))
     if len(found) < 2 or len(found) != len(set(data.ids)):
         raise HTTPException(status_code=400, detail="Need at least two existing sessions belonging to this user")
-    threading.Thread(target=_merge_sessions, args=(found,), daemon=True).start()
-    return {"status": "merging", "into": found[0]["id"]}
+    _merge_sessions(found)
+    return {"status": "merged", "into": found[0]["id"]}
 
 
 def _merge_sessions(found: list[dict]):
@@ -1298,10 +1298,45 @@ def _merge_sessions(found: list[dict]):
     first = found[0]
     transcript = "\n".join((s.get("transcript") or "").strip() for s in found).strip()
     raw = "\n".join((s.get("raw_transcript") or s.get("transcript") or "").strip() for s in found).strip()
-    print(f"[merge] joining {len(found)} recordings ({len(transcript)} chars) into one set of notes in user-selected order...")
+    print(f"[merge] directly joining {len(found)} recordings ({len(transcript)} chars) without pipeline reprocessing...")
     try:
-        with _pipeline_semaphore:
-            result = _run_text_steps(transcript, 0, f"live:{first['id']}")
+        # Merge notes and shift paragraph heading indices
+        merged_notes_parts = []
+        merged_headings = {}
+        current_para_index = 0
+        for s in found:
+            s_notes = (s.get("notes") or s.get("transcript") or "").strip()
+            if s_notes:
+                merged_notes_parts.append(s_notes)
+                s_headings = s.get("notes_headings") or {}
+                for k, v in s_headings.items():
+                    try:
+                        merged_headings[str(int(k) + current_para_index)] = v
+                    except Exception:
+                        pass
+                empty_count = sum(1 for line in s_notes.split("\n") if not line.strip())
+                current_para_index += (empty_count + 1)
+        merged_notes = "\n\n".join(merged_notes_parts)
+
+        # Merge summaries
+        merged_summary = "\n\n".join((s.get("summary") or "").strip() for s in found if (s.get("summary") or "").strip())
+
+        # Merge shlokas (preserve order, deduplicate identical text)
+        seen_shlokas = set()
+        merged_shlokas = []
+        for s in found:
+            for sh in (s.get("shlokas") or []):
+                key = (sh.get("text") or "").strip() if isinstance(sh, dict) else str(sh).strip()
+                if key and key not in seen_shlokas:
+                    seen_shlokas.add(key)
+                    merged_shlokas.append(sh)
+
+        # Merge segments
+        merged_segments = []
+        for s in found:
+            for seg in (s.get("segments") or []):
+                if isinstance(seg, dict) and (seg.get("text") or "").strip():
+                    merged_segments.append(seg)
 
         # Concatenate audio files if present
         merged_audio_path = None
@@ -1327,21 +1362,54 @@ def _merge_sessions(found: list[dict]):
         except Exception as e_audio:
             print(f"[merge] audio concat optional step skipped: {e_audio}")
 
-        merged = _session_from_result({**result, "transcript": transcript}, first.get("title"), 0,
-                                      raw_transcript=raw, asr_provider=first.get("asr_provider"),
-                                      pieces_recorded=sum(int(s.get("pieces_recorded") or 1) for s in found),
-                                      stopped_at=found[-1].get("stopped_at"), live=True,
-                                      created_by=first.get("created_by"))
-        merged["id"], merged["created_at"] = first["id"], first["created_at"]
-        merged["created_by"] = first.get("created_by")
+        merged = {
+            **first,
+            "id": first["id"],
+            "title": first.get("title") or "Pravachanam",
+            "created_at": first["created_at"],
+            "type": "chunk_complete",
+            "chunk_index": 0,
+            "summary": merged_summary,
+            "notes": merged_notes,
+            "enhanced_notes": merged_notes,
+            "transliterated_notes": first.get("transliterated_notes"),
+            "notes_headings": merged_headings,
+            "shlokas": merged_shlokas,
+            "segments": merged_segments,
+            "transcript": transcript,
+            "raw_transcript": raw,
+            "asr_provider": first.get("asr_provider"),
+            "asr_report": first.get("asr_report"),
+            "youtube_url": first.get("youtube_url"),
+            "pieces_recorded": sum(int(s.get("pieces_recorded") or 1) for s in found),
+            "stopped_at": found[-1].get("stopped_at"),
+            "live": True,
+            "created_by": first.get("created_by"),
+            "needs_manual_review": any(bool(s.get("needs_manual_review")) for s in found),
+            "validation_errors": [err for s in found for err in (s.get("validation_errors") or [])],
+        }
         if merged_audio_path and os.path.exists(merged_audio_path):
             merged["source_audio_path"] = merged_audio_path
+
         gone = {s["id"] for s in found[1:]}
         _forget_memory([f"live:{i}" for i in gone])
+
+        # Index merged segments in ChromaDB for search/RAG
+        try:
+            if merged_segments:
+                from agents.memory_agent import memory_agent
+                memory_agent({
+                    "segments": merged_segments,
+                    "audio_path": f"live:{first['id']}",
+                    "chunk_index": 0,
+                })
+        except Exception as e_mem:
+            print(f"[merge] memory indexing skipped: {e_mem}")
+
         sessions_store = [merged if s.get("id") == first["id"] else s for s in sessions_store if s.get("id") not in gone]
         _save_sessions()
         _broadcast({"type": "session_complete", "session_id": first["id"], "session": merged})
-        print("[merge] done")
+        print(f"[merge] done ({len(found)} sessions merged directly)")
     except Exception as e:
         _report_failure(e, 0, created_by=first.get("created_by"))
 
