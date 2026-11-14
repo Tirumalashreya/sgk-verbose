@@ -96,7 +96,7 @@ export default function HistoryScreen({ go, t, lang }) {
       <Enter>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View>
-            <Text style={[lang === 'te' ? T.displayTe : T.display, { color: c.ink }]}>{t('history')}</Text>
+            <Text style={[lang === 'te' ? T.displayTe : T.display, { color: c.ink }]}>{t('notes')}</Text>
             <Text style={[T.body, { color: c.muted, marginTop: 4 }]}>
               {sessions.length} {sessions.length === 1 ? 'recording' : 'recordings'}
             </Text>

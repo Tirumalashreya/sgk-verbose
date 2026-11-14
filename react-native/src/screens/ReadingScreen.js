@@ -77,6 +77,7 @@ export default function ReadingScreen({ go, back, t, session: given }) {
   const recognitionRef = useRef(null);
   const [romanInput, setRomanInput] = useState('');
   const [exportKind, setExportKind] = useState(null);   // 'pdf' | 'doc' | null (dialog closed)
+  const [audioLoading, setAudioLoading] = useState(false);
 
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
@@ -424,8 +425,6 @@ export default function ReadingScreen({ go, back, t, session: given }) {
     setSelection({ start: caret, end: caret });
     setRomanInput('');
   };
-
-  const [audioLoading, setAudioLoading] = useState(false);
 
   const handleAudioDownload = async () => {
     if (audioLoading) return;
