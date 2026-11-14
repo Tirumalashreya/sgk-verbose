@@ -115,7 +115,7 @@ export const STRINGS = {
     askPlaceholder: 'Ask questions or search topics (e.g. "రామానుజ", "శరణాగతి", "భగవద్గీత")…',
     askNothing: 'Nothing found yet. Pravachanams you add become searchable.',
     fromNotes: 'From the notes',
-    nav: { home: 'Home', notes: 'Notes', ask: 'Ask', record: 'Record' },
+    nav: { home: 'Home', history: 'History', record: 'Record', ask: 'Ask', notes: 'Notes' },
     back: 'Back',
   },
   te: {
@@ -227,7 +227,7 @@ export const STRINGS = {
     askPlaceholder: 'ప్రశ్నలు లేదా విషయాలు (ఉదా: "రామానుజ", "శరణాగతి", "భగవద్గీత")…',
     askNothing: 'ఇంకా ఏమీ దొరకలేదు. మీరు చేర్చే ప్రవచనాలు వెతకదగినవి అవుతాయి.',
     fromNotes: 'నోట్స్ నుండి',
-    nav: { home: 'ముంగిలి', notes: 'నోట్స్', ask: 'అడగండి', record: 'రికార్డ్' },
+    nav: { home: 'ముంగిలి', history: 'చరిత్ర', record: 'రికార్డ్', ask: 'అడగండి', notes: 'నోట్స్' },
     back: 'వెనుకకు',
   },
 };

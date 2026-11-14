@@ -12,7 +12,7 @@ export default function NavBar({ c, t, screen, go }) {
   const insets = useSafeAreaInsets();
   const nav = t('nav');
   const Item = ({ id, icon, label }) => {
-    const active = screen === id || (id === 'history' && screen === 'reading');
+    const active = screen === id;
     return (
       <Pressable onPress={() => go(id)} accessibilityRole="tab" accessibilityState={{ selected: active }} accessibilityLabel={label}
         style={st.item} hitSlop={6}>
@@ -24,14 +24,15 @@ export default function NavBar({ c, t, screen, go }) {
   return (
     <View style={[st.bar, { backgroundColor: c.surface, borderTopColor: c.line, paddingBottom: Math.max(insets.bottom, 10) }]}>
       <Item id="home" icon="home" label={nav.home} />
-      <Item id="history" icon="book" label={nav.notes || 'Notes'} />
+      <Item id="history" icon="clock" label={nav.history} />
       <Pressable onPress={() => go('live')} accessibilityRole="button" accessibilityLabel={nav.record} style={st.recordWrap}>
         <LinearGradient colors={[c.kumkum, c.kumkumDeep]} style={[st.record, { borderColor: c.bg }]}>
           <Icon name="mic" size={26} color={c.onFill} />
         </LinearGradient>
         <Text style={{ fontFamily: isTelugu(nav.record) ? F.readMed : F.uiSemi, fontSize: 11, color: screen === 'live' ? c.brass : c.muted, marginTop: 2 }}>{nav.record}</Text>
       </Pressable>
-      <Item id="ask" icon="search" label={nav.ask || 'Ask'} />
+      <Item id="ask" icon="search" label={nav.ask} />
+      <Item id="reading" icon="book" label={nav.notes} />
     </View>
   );
 }
