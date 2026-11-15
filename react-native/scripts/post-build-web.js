@@ -20,6 +20,28 @@ if (fs.existsSync(htmlFile)) {
   <meta name="apple-mobile-web-app-title" content="SGK'S Notes" />
   <meta name="application-name" content="SGK'S Notes" />
   <meta name="theme-color" content="#2a2340" />
+  <style id="sgk-custom-scrollbar">
+    * {
+      scrollbar-width: thin !important;
+      scrollbar-color: #C49746 rgba(0, 0, 0, 0.05) !important;
+    }
+    ::-webkit-scrollbar {
+      width: 8px !important;
+      height: 8px !important;
+      display: block !important;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.04) !important;
+      border-radius: 4px !important;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #C49746 !important;
+      border-radius: 4px !important;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #A67C2E !important;
+    }
+  </style>
 `;
 
   // Avoid duplicate injection

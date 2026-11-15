@@ -24,6 +24,37 @@ import AskScreen from './src/screens/AskScreen';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+if (typeof document !== 'undefined') {
+  const styleId = 'sgk-custom-scrollbar';
+  if (!document.getElementById(styleId)) {
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      * {
+        scrollbar-width: thin !important;
+        scrollbar-color: #C49746 rgba(0, 0, 0, 0.05) !important;
+      }
+      ::-webkit-scrollbar {
+        width: 8px !important;
+        height: 8px !important;
+        display: block !important;
+      }
+      ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.04) !important;
+        border-radius: 4px !important;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #C49746 !important;
+        border-radius: 4px !important;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #A67C2E !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+}
+
 const WITH_NAV = new Set(['home', 'history', 'ask', 'reading']);
 
 export default function App() {

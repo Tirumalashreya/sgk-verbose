@@ -24,7 +24,7 @@ export function Screen({ c, kolam = false, scroll = true, children, footer, cont
         refreshControl={refreshControl}
         contentContainerStyle={scroll ? [st.column, { paddingTop: insets.top + S.l, paddingBottom: insets.bottom + 120 }, contentStyle] : undefined}
         keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={Platform.OS === 'web'}
       >
         {scroll ? children : <View style={[st.column, { flex: 1, paddingTop: insets.top + S.l }, contentStyle]}>{children}</View>}
       </Body>
