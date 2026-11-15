@@ -1407,22 +1407,8 @@ def _merge_sessions(found: list[dict]):
             "validation_errors": [err for s in found for err in (s.get("validation_errors") or [])],
         }
 
-        # Index merged segments in ChromaDB for search/RAG asynchronously
-        # so merge returns instantly (<20ms) instead of blocking for embeddings
-        if merged_segments:
-            def _bg_index():
-                try:
-                    from agents.memory_agent import memory_agent
-                    memory_agent({
-                        "segments": merged_segments,
-                        "audio_path": f"live:{merged_id}",
-                        "chunk_index": 0,
-                    })
-                except Exception as e_mem:
-                    print(f"[merge] background memory indexing skipped: {e_mem}")
-            threading.Thread(target=_bg_index, daemon=True).start()
-
-        # Keep original notes safe, append merged session to the store (newest position)
+        # Pure document merge: append notes of subsequent files to the end of the first file.
+        # No re-indexing or ChromaDB overhead needed since individual notes are already indexed.
         sessions_store.append(merged)
         _save_sessions()
         _broadcast({"type": "session_complete", "session_id": merged_id, "session": merged})
