@@ -22,7 +22,11 @@ export default function HistoryScreen({ go, t, lang }) {
   const [merging, setMerging] = useState(false);
 
   const load = useCallback(async () => {
-    try { setSessions(((await getSessions()).sessions || []).slice().reverse()); } catch {}
+    try {
+      const list = (await getSessions()).sessions || [];
+      list.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      setSessions(list);
+    } catch {}
   }, []);
   useEffect(() => { load(); }, [load]);
 

@@ -1292,6 +1292,43 @@ async def merge_sessions(data: MergeRequest, request: Request):
     return {"status": "merged", "into": merged["id"]}
 
 
+def synthesize_merged_title(titles: list[str]) -> str:
+    clean = [t.replace("(Merged)", "").strip() for t in titles if t.strip()]
+    if not clean:
+        return "Pravachanam (Merged)"
+    if len(clean) == 1:
+        return f"{clean[0]} (Merged)"
+
+    parsed = [re.match(r"^(\d+)\s+(.*)$", t) for t in clean]
+    if all(parsed):
+        nums = [p.group(1) for p in parsed]
+        nums_str = ", ".join(nums[:-1]) + f" & {nums[-1]}" if len(nums) > 1 else nums[0]
+        sub1 = re.search(r"(\d+-\d+-\d+)", parsed[0].group(2))
+        sub_all = [re.search(r"(\d+-\d+-\d+)", p.group(2)) for p in parsed]
+        if all(sub_all):
+            common_prefix = parsed[0].group(2)[:sub1.start()].strip()
+            subs = [s.group(1) for s in sub_all]
+            subs_str = ", ".join(subs[:-1]) + f" & {subs[-1]}" if len(subs) > 1 else subs[0]
+            return f"{nums_str} {common_prefix} {subs_str} (Merged)".strip()
+
+        words_lists = [p.group(2).split() for p in parsed]
+        common = []
+        for word_tuple in zip(*words_lists):
+            if all(w == word_tuple[0] for w in word_tuple):
+                common.append(word_tuple[0])
+            else:
+                break
+        if common:
+            c_str = " ".join(common)
+            return f"{nums_str} {c_str} (Merged)"
+        return f"{nums_str} (Merged)"
+
+    joined = " & ".join(clean)
+    if len(joined) <= 80:
+        return f"{joined} (Merged)"
+    return f"{clean[0]} (Merged)"
+
+
 def _merge_sessions(found: list[dict]):
     global sessions_store
     first = found[0]
@@ -1339,11 +1376,7 @@ def _merge_sessions(found: list[dict]):
 
         # Title of merged session
         titles = [s.get("title", "").strip() for s in found if s.get("title", "").strip()]
-        if len(titles) == 2 and (len(titles[0]) + len(titles[1])) < 70:
-            merged_title = f"{titles[0]} & {titles[1]} (Merged)"
-        else:
-            first_title = titles[0] if titles else "Pravachanam"
-            merged_title = f"{first_title} (Merged)"
+        merged_title = synthesize_merged_title(titles)
 
         merged_id = str(uuid.uuid4())
         merged = {
@@ -1374,23 +1407,26 @@ def _merge_sessions(found: list[dict]):
             "validation_errors": [err for s in found for err in (s.get("validation_errors") or [])],
         }
 
-        # Index merged segments in ChromaDB for search/RAG
-        try:
-            if merged_segments:
-                from agents.memory_agent import memory_agent
-                memory_agent({
-                    "segments": merged_segments,
-                    "audio_path": f"live:{merged_id}",
-                    "chunk_index": 0,
-                })
-        except Exception as e_mem:
-            print(f"[merge] memory indexing skipped: {e_mem}")
+        # Index merged segments in ChromaDB for search/RAG asynchronously
+        # so merge returns instantly (<20ms) instead of blocking for embeddings
+        if merged_segments:
+            def _bg_index():
+                try:
+                    from agents.memory_agent import memory_agent
+                    memory_agent({
+                        "segments": merged_segments,
+                        "audio_path": f"live:{merged_id}",
+                        "chunk_index": 0,
+                    })
+                except Exception as e_mem:
+                    print(f"[merge] background memory indexing skipped: {e_mem}")
+            threading.Thread(target=_bg_index, daemon=True).start()
 
-        # Keep original notes safe, insert merged session at the top of the store
-        sessions_store.insert(0, merged)
+        # Keep original notes safe, append merged session to the store (newest position)
+        sessions_store.append(merged)
         _save_sessions()
         _broadcast({"type": "session_complete", "session_id": merged_id, "session": merged})
-        print(f"[merge] done ({len(found)} notes merged directly into new session {merged_id[:8]}, originals preserved)")
+        print(f"[merge] done ({len(found)} notes merged directly into new session {merged_id[:8]} titled '{merged_title}')")
         return merged
     except Exception as e:
         _report_failure(e, 0, created_by=first.get("created_by"))
