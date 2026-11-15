@@ -68,16 +68,17 @@ export default function HistoryScreen({ go, t, lang }) {
   };
 
   const executeMerge = async () => {
-    if (selectedMergeIds.length < 2) return;
+    if (merging || selectedMergeIds.length < 2) return;
     setMerging(true);
     try {
       await mergeSessions(selectedMergeIds);
-      notify(t('history'), `Merging ${selectedMergeIds.length} recordings...`);
       cancelMergeMode();
       await load();
+      notify(t('notes'), `Merged ${selectedMergeIds.length} notes successfully`);
     } catch (e) {
       setMerging(false);
-      notify(t('history'), String(e.message || 'Merge failed'));
+      setShowConfirmModal(false);
+      notify(t('notes'), String(e.message || 'Merge failed'));
     }
   };
 
@@ -124,12 +125,12 @@ export default function HistoryScreen({ go, t, lang }) {
         <View style={[st.mergeBanner, { backgroundColor: c.raised, borderColor: c.brass }]}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontFamily: F.readBold, fontSize: 15, color: c.brass }}>
-              Select recordings to merge (in sequence):
+              Select notes to merge (in sequence):
             </Text>
             <Text style={{ fontSize: 12.5, color: c.muted, marginTop: 2 }}>
               {selectedMergeIds.length === 0
-                ? 'Tap recording to select (stamped with #1, #2...)'
-                : `${selectedMergeIds.length} recordings selected (Merge Order: 1 to ${selectedMergeIds.length})`}
+                ? 'Tap note to select (stamped with #1, #2...)'
+                : `${selectedMergeIds.length} notes selected (Merge Order: 1 to ${selectedMergeIds.length})`}
             </Text>
           </View>
           <Pressable onPress={cancelMergeMode} style={{ padding: 6 }}>
@@ -205,10 +206,10 @@ export default function HistoryScreen({ go, t, lang }) {
         <View style={[st.floatingBar, { backgroundColor: c.surface, borderColor: c.brass, shadowColor: '#000' }]}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontFamily: F.readBold, fontSize: 14, color: c.ink }}>
-              Selected: {selectedMergeIds.length} recordings
+              Selected: {selectedMergeIds.length} notes
             </Text>
             <Text style={{ fontSize: 12, color: c.muted }}>
-              {selectedMergeIds.length >= 2 ? 'Ready to merge in order' : 'Select at least 2 recordings'}
+              {selectedMergeIds.length >= 2 ? 'Ready to merge in order' : 'Select at least 2 notes'}
             </Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
@@ -216,7 +217,7 @@ export default function HistoryScreen({ go, t, lang }) {
             <Button
               c={c}
               variant="brass"
-              label={`Merge (${selectedMergeIds.length})`}
+              label={`Merge Notes (${selectedMergeIds.length})`}
               onPress={() => setShowConfirmModal(true)}
               disabled={selectedMergeIds.length < 2 || merging}
             />
@@ -239,8 +240,8 @@ export default function HistoryScreen({ go, t, lang }) {
             >
               <Icon name="merge" size={20} color={c.brass} />
               <View style={{ flex: 1 }}>
-                <Text style={[st.sheetItemText, { color: c.ink, fontFamily: F.readMed }]}>Merge with other recordings</Text>
-                <Text style={{ fontSize: 12, color: c.muted }}>Set as #1 and select other recordings to merge</Text>
+                <Text style={[st.sheetItemText, { color: c.ink, fontFamily: F.readMed }]}>Merge with other notes</Text>
+                <Text style={{ fontSize: 12, color: c.muted }}>Set as #1 and select other notes to merge</Text>
               </View>
             </Pressable>
 
@@ -288,10 +289,10 @@ export default function HistoryScreen({ go, t, lang }) {
         <View style={st.modalOverlay}>
           <View style={[st.confirmCard, { backgroundColor: c.surface, borderColor: c.brass }]}>
             <Text style={{ fontFamily: F.readBold, fontSize: 18, color: c.brass, marginBottom: 4 }}>
-              Merge Recordings ({selectedMergeIds.length} files)
+              Merge Notes ({selectedMergeIds.length} files)
             </Text>
             <Text style={{ fontSize: 13, color: c.muted, marginBottom: S.m }}>
-              Notes and audio will be joined in your selected sequence:
+              The notes and shlokas will be joined in your selected sequence:
             </Text>
 
             <ScrollView style={{ maxHeight: 220, marginBottom: S.m }}>
@@ -314,13 +315,13 @@ export default function HistoryScreen({ go, t, lang }) {
               <View style={{ alignItems: 'center', paddingVertical: S.m }}>
                 <ActivityIndicator color={c.brass} size="large" />
                 <Text style={{ marginTop: S.s, fontFamily: F.readMed, fontSize: 14, color: c.brass }}>
-                  Merging recordings... Please wait
+                  Merging notes... Please wait
                 </Text>
               </View>
             ) : (
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <Button c={c} variant="quiet" label="Cancel" onPress={() => setShowConfirmModal(false)} style={{ flex: 1 }} />
-                <Button c={c} variant="brass" label="Merge" onPress={executeMerge} style={{ flex: 1 }} />
+                <Button c={c} variant="brass" label="Merge Notes" onPress={executeMerge} style={{ flex: 1 }} />
               </View>
             )}
           </View>
