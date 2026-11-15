@@ -1280,16 +1280,16 @@ class MergeRequest(BaseModel):
 
 @app.post("/merge-sessions")
 async def merge_sessions(data: MergeRequest, request: Request):
-    """Join several recordings of one pravachanam into one set of notes, in the
-    exact sequence selected by the user. The first chosen keeps its id and title."""
+    """Join several recordings of one pravachanam into one combined set of notes, in the
+    exact sequence selected by the user. Creates a new merged session while keeping originals intact."""
     from fastapi import HTTPException
     id_order = {sid: idx for idx, sid in enumerate(data.ids)}
     found = [s for s in sessions_store if s.get("id") in id_order]
     found.sort(key=lambda s: id_order.get(s.get("id"), 0))
     if len(found) < 2 or len(found) != len(set(data.ids)):
         raise HTTPException(status_code=400, detail="One or more selected notes no longer exist or have already been merged")
-    _merge_sessions(found)
-    return {"status": "merged", "into": found[0]["id"]}
+    merged = _merge_sessions(found)
+    return {"status": "merged", "into": merged["id"]}
 
 
 def _merge_sessions(found: list[dict]):
@@ -1337,11 +1337,20 @@ def _merge_sessions(found: list[dict]):
                 if isinstance(seg, dict) and (seg.get("text") or "").strip():
                     merged_segments.append(seg)
 
+        # Title of merged session
+        titles = [s.get("title", "").strip() for s in found if s.get("title", "").strip()]
+        if len(titles) == 2 and (len(titles[0]) + len(titles[1])) < 70:
+            merged_title = f"{titles[0]} & {titles[1]} (Merged)"
+        else:
+            first_title = titles[0] if titles else "Pravachanam"
+            merged_title = f"{first_title} (Merged)"
+
+        merged_id = str(uuid.uuid4())
         merged = {
             **first,
-            "id": first["id"],
-            "title": first.get("title") or "Pravachanam",
-            "created_at": first["created_at"],
+            "id": merged_id,
+            "title": merged_title,
+            "created_at": datetime.utcnow().isoformat(),
             "type": "chunk_complete",
             "chunk_index": 0,
             "summary": merged_summary,
@@ -1365,25 +1374,24 @@ def _merge_sessions(found: list[dict]):
             "validation_errors": [err for s in found for err in (s.get("validation_errors") or [])],
         }
 
-        gone = {s["id"] for s in found[1:]}
-        _forget_memory([f"live:{i}" for i in gone])
-
         # Index merged segments in ChromaDB for search/RAG
         try:
             if merged_segments:
                 from agents.memory_agent import memory_agent
                 memory_agent({
                     "segments": merged_segments,
-                    "audio_path": f"live:{first['id']}",
+                    "audio_path": f"live:{merged_id}",
                     "chunk_index": 0,
                 })
         except Exception as e_mem:
             print(f"[merge] memory indexing skipped: {e_mem}")
 
-        sessions_store = [merged if s.get("id") == first["id"] else s for s in sessions_store if s.get("id") not in gone]
+        # Keep original notes safe, insert merged session at the top of the store
+        sessions_store.insert(0, merged)
         _save_sessions()
-        _broadcast({"type": "session_complete", "session_id": first["id"], "session": merged})
-        print(f"[merge] done ({len(found)} notes merged directly, no audio merged)")
+        _broadcast({"type": "session_complete", "session_id": merged_id, "session": merged})
+        print(f"[merge] done ({len(found)} notes merged directly into new session {merged_id[:8]}, originals preserved)")
+        return merged
     except Exception as e:
         _report_failure(e, 0, created_by=first.get("created_by"))
 

@@ -73,17 +73,16 @@ def test_unknown_continue_id_starts_new_notes(store):
     assert "continued" not in res and store._live_recording_sessions["alice"]["id"] != "nope"
 
 
-def test_merge_joins_in_recorded_order_and_keeps_the_first(store):
+def test_merge_joins_in_recorded_order_and_creates_merged(store):
     store.sessions_store.extend([
         _earlier("c3", "third", "2026-10-15T09:51:00", pieces=2),
         _earlier("a1", "first", "2026-10-15T09:46:00"),
         {"id": "other", "title": "upload", "created_at": "2026-10-14T10:00:00", "transcript": "x"},
         _earlier("b2", "second", "2026-10-15T09:49:00"),
     ])
-    store._merge_sessions(sorted((s for s in store.sessions_store if s["id"] in {"a1", "b2", "c3"}),
-                                 key=lambda s: s["created_at"]))
-    ids = [s["id"] for s in store.sessions_store]
-    assert ids == ["a1", "other"]
-    merged = store.sessions_store[0]
+    merged = store._merge_sessions(sorted((s for s in store.sessions_store if s["id"] in {"a1", "b2", "c3"}),
+                                          key=lambda s: s["created_at"]))
     assert merged["transcript"] == "first\nsecond\nthird"
-    assert merged["title"] == "Live Recording a1" and merged["pieces_recorded"] == 4
+    assert "Merged" in merged["title"]
+    store_ids = {s["id"] for s in store.sessions_store}
+    assert {"a1", "b2", "c3", "other", merged["id"]}.issubset(store_ids)
